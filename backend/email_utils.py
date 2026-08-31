@@ -24,14 +24,13 @@ def send_invitation_email(
     invited_by: str,
     designation: str | None = None,
     department: str | None = None,
-    accept_url_override: str | None = None
 ) -> bool:
     """Send team invitation email via Brevo REST API."""
     if not BREVO_API_KEY:
         print("[Email] Warning: BREVO_API_KEY not configured")
         return False
 
-    accept_url = accept_url_override or f"https://app-eta-flax-97.vercel.app/accept-invite?token={token}"
+    accept_url = f"https://app-eta-flax-97.vercel.app/accept-invite?token={token}"
     url = "https://api.brevo.com/v3/smtp/email"
     headers = {
         "api-key": BREVO_API_KEY,
