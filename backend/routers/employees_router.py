@@ -551,10 +551,20 @@ async def create_leave(payload: LeaveIn, current: UserPublic = Depends(get_curre
     doc["updated_at"] = utc_iso()
     res = await db.leave_requests.insert_one(doc)
     doc["_id"] = res.inserted_id
-    emp = await db.users.find_one({"_id": oid(doc["employee_id"])}, {"name": 1})
+        emp = await db.users.find_one({"_id": oid(doc["employee_id"])}, {"name": 1})
     await log_activity(db, current, "Leave requested", "Employees", target=f"{emp['name'] if emp else '—'} · {doc['from_date']} → {doc['to_date']}")
-    await notify(db, None, "Leave request", f"{emp['name'] if emp else 'Employee'} requested {doc['kind']} leave from {doc['from_date']} to {doc['to_date']}.",
-                 kind="warning", link="/employees")
+
+    approvers = await db.users.find(
+        {"role": {"$in": ["Founder", "Admin", "Manager"]}},
+        {"_id": 1},
+    ).to_list(50)
+
+    for a in approvers:
+        await notify(
+            db, str(a["_id"]), "Leave request",
+            f"{emp['name'] if emp else 'Employee'} requested {doc['kind']} leave from {doc['from_date']} to {doc['to_date']}.",
+            kind="warning", link="/employees",
+        )
     return serialize(doc)
 
 
