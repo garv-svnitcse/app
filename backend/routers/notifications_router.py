@@ -4,6 +4,7 @@ from bson import ObjectId
 from db import get_db, utc_now
 from auth_utils import get_current_user
 from models import UserPublic
+from hub_utils import role_notification_filter
 
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
@@ -23,9 +24,8 @@ def _serialize(doc):
 @router.get("")
 async def list_notifications(current: UserPublic = Depends(get_current_user)):
     db = get_db()
-    docs = await db.notifications.find(
-        {"$or": [{"user_id": current.id}, {"user_id": None}]}
-    ).sort("created_at", -1).to_list(200)
+    q = role_notification_filter(current.role, current.id)
+    docs = await db.notifications.find(q).sort("created_at", -1).to_list(200)
     return [_serialize(d) for d in docs]
 
 
@@ -43,8 +43,9 @@ async def mark_read(notif_id: str, current: UserPublic = Depends(get_current_use
 @router.post("/read-all")
 async def mark_all_read(current: UserPublic = Depends(get_current_user)):
     db = get_db()
+    q = role_notification_filter(current.role, current.id)
     await db.notifications.update_many(
-        {"$or": [{"user_id": current.id}, {"user_id": None}]},
+        q,
         {"$set": {"read": True}},
     )
     return {"ok": True}
@@ -53,7 +54,7 @@ async def mark_all_read(current: UserPublic = Depends(get_current_user)):
 @router.get("/unread-count")
 async def unread_count(current: UserPublic = Depends(get_current_user)):
     db = get_db()
-    count = await db.notifications.count_documents(
-        {"read": False, "$or": [{"user_id": current.id}, {"user_id": None}]}
-    )
+    role_q = role_notification_filter(current.role, current.id)
+    q = {"$and": [{"read": False}, role_q]}
+    count = await db.notifications.count_documents(q)
     return {"count": count}
