@@ -185,15 +185,6 @@ export default function Login() {
               {busy ? <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Signing in…</span> : (<span className="inline-flex items-center gap-1.5">Sign in <ArrowRight className="h-4 w-4" /></span>)}
             </Button>
           </form>
-
-          <div className="mt-8 rounded-lg border border-border bg-muted/40 px-4 py-3">
-            <div className="text-[11px] uppercase tracking-[0.14em] text-muted-foreground mb-1">Demo access</div>
-            <div className="text-[12.5px] text-foreground/80 leading-relaxed">
-              <div><span className="text-muted-foreground">Founder</span> · anilanand635@gmail.com / Wavygo@2026</div>
-              <div><span className="text-muted-foreground">Admin</span> · admin@wavygo.in / Wavygo@2026</div>
-              <div><span className="text-muted-foreground">Employee</span> · employee@wavygo.in / Wavygo@2026</div>
-            </div>
-          </div>
         </div>
 
         <footer className="text-[11px] text-muted-foreground tracking-[0.04em] pt-4 border-t border-border">

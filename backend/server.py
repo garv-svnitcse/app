@@ -10,7 +10,6 @@ from starlette.middleware.cors import CORSMiddleware
 
 from db import get_db, utc_now, close_db
 from seed import seed_all
-from seed_part2 import seed_part2
 from routers.auth_router import router as auth_router
 from routers.users_router import router as users_router
 from routers.notifications_router import router as notifications_router
@@ -88,10 +87,9 @@ async def _startup():
     get_db()
     try:
         await seed_all()
-        await seed_part2()
-        logger.info("Seed complete (Part 1 + Part 2)")
+        logger.info("Founder account verification complete.")
     except Exception as e:
-        logger.exception("Seed failed: %s", e)
+        logger.exception("Startup user verification failed: %s", e)
 
 
 @app.on_event("shutdown")
