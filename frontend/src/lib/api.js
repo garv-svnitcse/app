@@ -1,9 +1,9 @@
 import axios from "axios";
 
 function getApiBase() {
-  const envUrl = process.env.REACT_APP_BACKEND_URL || "";
+  const envUrl = (process.env.REACT_APP_BACKEND_URL || "").trim().replace(/\/+$/, "");
   if (envUrl && !envUrl.includes("emergentagent.com") && !envUrl.includes("preview")) {
-    return `${envUrl.replace(/\/+$/, "")}/api`;
+    return envUrl.endsWith("/api") ? envUrl : `${envUrl}/api`;
   }
   return "/api";
 }
