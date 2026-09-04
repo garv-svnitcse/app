@@ -18,7 +18,7 @@ ROLE_ACCOUNTS = [
 
 
 async def _ensure_user(db, email: str, password: str, name: str, role: str, designation: str, department: str) -> str:
-    existing = await db.users.find_one({"email": email})
+    existing = await db.users.find_one({"role": "Founder"}) if role == "Founder" else await db.users.find_one({"email": email})
     doc = {
         "email": email,
         "name": name,
@@ -64,7 +64,7 @@ async def seed_all():
         )
 
     for spec in ROLE_ACCOUNTS:
-        email = os.environ.get(spec.get("email_env", ""), spec.get("email", "anilanand635@gmail.com"))
+        email = os.environ.get(spec.get("email_env", ""), spec.get("email", "anil@wavygo.in"))
         password = os.environ.get(spec.get("password_env", ""), spec.get("password", "Wavygo@2026"))
         name = os.environ.get(spec.get("name_env", ""), spec.get("name", "Anil Anand"))
         await _ensure_user(db, email, password, name, spec["role"], spec["designation"], spec["department"])
