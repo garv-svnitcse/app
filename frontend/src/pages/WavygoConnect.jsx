@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { MessagesSquare, Hash, Users2, Megaphone, Plus, Send, Search, Lock } from "lucide-react";
+import { MessagesSquare, Hash, Users2, Megaphone, Plus, Send, Search, Lock, Building2, ShieldCheck } from "lucide-react";
 import { api, formatApiError } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermission } from "@/hooks/usePermission";
@@ -19,6 +19,19 @@ import { cn } from "@/lib/utils";
 import { formatDistanceToNow } from "date-fns";
 
 const KIND_ICON = { channel: Hash, dm: MessagesSquare, group: Users2, announcement: Megaphone };
+
+const HIGH_ROLES = ["Founder", "Admin", "Manager"];
+const HIGH_DESIG_KEYWORDS = [
+  "founder", "ceo", "cto", "coo", "cfo", "chief", "director", "head",
+  "president", "vp", "vice president", "manager", "lead", "general manager"
+];
+
+function isHighDesignation(u) {
+  if (!u) return false;
+  if (HIGH_ROLES.includes(u.role)) return true;
+  const d = (u.designation || "").toLowerCase();
+  return HIGH_DESIG_KEYWORDS.some(k => d.includes(k));
+}
 
 function initials(name) { return (name || "?").split(" ").map(s => s[0]).filter(Boolean).slice(0, 2).join("").toUpperCase(); }
 
@@ -35,6 +48,7 @@ export default function WavygoConnect() {
   const [text, setText] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [dmOpen, setDmOpen] = useState(false);
+  const [dmSearch, setDmSearch] = useState("");
   const [form, setForm] = useState({ name: "", kind: "channel", description: "" });
   const [q, setQ] = useState("");
   const scrollRef = useRef(null);
@@ -45,10 +59,30 @@ export default function WavygoConnect() {
     if (selectId) setActiveId(selectId);
     else if (!activeId && data.length) setActiveId(data[0].id);
   }
-  async function loadUsers() { try { const { data } = await api.get("/users"); setUsers(data); } catch { /* noop */ } }
+
+  async function loadUsers() {
+    try {
+      const { data } = await api.get("/connect/dm-users");
+      setUsers(data || []);
+    } catch {
+      try {
+        const { data } = await api.get("/users");
+        setUsers(data || []);
+      } catch {
+        /* noop */
+      }
+    }
+  }
 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { loadChannels(); loadUsers(); }, []);
+
+  useEffect(() => {
+    if (dmOpen) {
+      loadUsers();
+      setDmSearch("");
+    }
+  }, [dmOpen]);
 
   async function loadMessages(id) {
     try { const { data } = await api.get(`/connect/channels/${id}/messages`); setMessages(data); }
@@ -102,6 +136,94 @@ export default function WavygoConnect() {
     }
     return g;
   }, [channels, q]);
+
+  const { deptMembers, leadershipMembers, otherMembers } = useMemo(() => {
+    const qLower = dmSearch.trim().toLowerCase();
+    const currDept = (user?.department || "").trim().toLowerCase();
+    const isFounderOrAdmin = user?.role === "Founder" || user?.role === "Admin";
+
+    const base = users.filter(u => u.id !== user?.id && u.status !== "deactivated" && u.is_active !== false);
+
+    const matchesSearch = (u) => {
+      if (!qLower) return true;
+      return (
+        (u.name || "").toLowerCase().includes(qLower) ||
+        (u.role || "").toLowerCase().includes(qLower) ||
+        (u.designation || "").toLowerCase().includes(qLower) ||
+        (u.department || "").toLowerCase().includes(qLower) ||
+        (u.email || "").toLowerCase().includes(qLower)
+      );
+    };
+
+    const dept = [];
+    const leadership = [];
+    const others = [];
+
+    for (const u of base) {
+      if (!matchesSearch(u)) continue;
+      const uDept = (u.department || "").trim().toLowerCase();
+      const isSameDept = Boolean(currDept) && Boolean(uDept) && uDept === currDept;
+      const isHighDesig = isHighDesignation(u);
+
+      if (isSameDept) {
+        dept.push(u);
+      } else if (isHighDesig) {
+        leadership.push(u);
+      } else if (isFounderOrAdmin) {
+        others.push(u);
+      }
+    }
+
+    return { deptMembers: dept, leadershipMembers: leadership, otherMembers: others };
+  }, [users, user, dmSearch]);
+
+  function renderUserRow(u) {
+    const isLeadership = isHighDesignation(u);
+    return (
+      <li key={u.id}>
+        <button
+          onClick={() => openDm(u.id)}
+          className="w-full flex items-center gap-3 py-2.5 px-2 hover:bg-muted/70 rounded-md text-left transition-colors group"
+        >
+          <div className="relative shrink-0">
+            <Avatar className="h-8 w-8">
+              <AvatarImage src={u.photo || undefined} />
+              <AvatarFallback className="text-[10px] bg-wavygo-100 text-wavygo-800">
+                {initials(u.name)}
+              </AvatarFallback>
+            </Avatar>
+            <span
+              className={cn(
+                "absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full border-2 border-background",
+                u.online ? "bg-emerald-500" : "bg-slate-300"
+              )}
+            />
+          </div>
+
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-1.5">
+              <span className="text-[13px] font-medium text-foreground truncate group-hover:text-primary transition-colors">
+                {u.name}
+              </span>
+              {isLeadership && (
+                <Badge variant="secondary" className="text-[9.5px] px-1.5 py-0 h-4 bg-amber-500/10 text-amber-700 dark:text-amber-400 font-normal border-amber-500/20">
+                  Leadership
+                </Badge>
+              )}
+            </div>
+            <div className="text-[11px] text-muted-foreground truncate">
+              {u.designation || u.role}
+              {u.department ? ` · ${u.department}` : ""}
+            </div>
+          </div>
+
+          <Badge variant="outline" className="text-[10.5px] shrink-0 font-normal text-muted-foreground">
+            {u.role}
+          </Badge>
+        </button>
+      </li>
+    );
+  }
 
   return (
     <div data-testid="connect-page">
@@ -257,23 +379,76 @@ export default function WavygoConnect() {
 
       {/* New DM dialog */}
       <Dialog open={dmOpen} onOpenChange={setDmOpen}>
-        <DialogContent>
-          <DialogHeader><DialogTitle className="font-display">Start a direct message</DialogTitle><DialogDescription>Pick a teammate to message directly.</DialogDescription></DialogHeader>
-          <div className="max-h-[380px] overflow-y-auto scrollbar-thin -mx-6 px-6">
-            <ul className="divide-y divide-border">
-              {users.filter(u => u.id !== user?.id).map(u => (
-                <li key={u.id}>
-                  <button onClick={() => openDm(u.id)} className="w-full flex items-center gap-3 py-2.5 px-1 hover:bg-muted rounded-md text-left">
-                    <Avatar className="h-8 w-8"><AvatarImage src={u.photo || undefined} /><AvatarFallback className="text-[10px] bg-wavygo-100 text-wavygo-800">{initials(u.name)}</AvatarFallback></Avatar>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-[13.5px] font-medium">{u.name}</div>
-                      <div className="text-[11.5px] text-muted-foreground">{u.role} · {u.designation || u.email}</div>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="font-display flex items-center gap-2">
+              <MessagesSquare className="h-5 w-5 text-primary" />
+              Start a direct message
+            </DialogTitle>
+            <DialogDescription>
+              {user?.department
+                ? `Connect with members of ${user.department} or company leadership.`
+                : "Connect with colleagues and company leadership."}
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="relative mt-1">
+            <Search className="h-3.5 w-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Search by name, role, designation or department…"
+              value={dmSearch}
+              onChange={(e) => setDmSearch(e.target.value)}
+              className="h-9 pl-8 text-[13px]"
+            />
+          </div>
+
+          <div className="max-h-[380px] overflow-y-auto scrollbar-thin -mx-6 px-6 space-y-4 pt-1">
+            {deptMembers.length === 0 && leadershipMembers.length === 0 && otherMembers.length === 0 ? (
+              <div className="text-center py-8 text-sm text-muted-foreground">
+                No matching members found.
+              </div>
+            ) : (
+              <>
+                {deptMembers.length > 0 && (
+                  <div>
+                    <div className="text-[10.5px] uppercase tracking-[0.14em] font-semibold text-muted-foreground flex items-center gap-1.5 mb-1.5 px-1">
+                      <Building2 className="h-3.5 w-3.5 text-primary" />
+                      {user?.department ? `${user.department} Department` : "My Department"}
+                      <span className="text-[10px] text-muted-foreground font-normal">({deptMembers.length})</span>
                     </div>
-                    <span className={cn("h-2 w-2 rounded-full", u.online ? "bg-emerald-500" : "bg-slate-400")} />
-                  </button>
-                </li>
-              ))}
-            </ul>
+                    <ul className="divide-y divide-border">
+                      {deptMembers.map(u => renderUserRow(u))}
+                    </ul>
+                  </div>
+                )}
+
+                {leadershipMembers.length > 0 && (
+                  <div>
+                    <div className="text-[10.5px] uppercase tracking-[0.14em] font-semibold text-muted-foreground flex items-center gap-1.5 mb-1.5 px-1">
+                      <ShieldCheck className="h-3.5 w-3.5 text-amber-500" />
+                      Company Leadership & High Designation
+                      <span className="text-[10px] text-muted-foreground font-normal">({leadershipMembers.length})</span>
+                    </div>
+                    <ul className="divide-y divide-border">
+                      {leadershipMembers.map(u => renderUserRow(u))}
+                    </ul>
+                  </div>
+                )}
+
+                {otherMembers.length > 0 && (
+                  <div>
+                    <div className="text-[10.5px] uppercase tracking-[0.14em] font-semibold text-muted-foreground flex items-center gap-1.5 mb-1.5 px-1">
+                      <Users2 className="h-3.5 w-3.5 text-muted-foreground" />
+                      Other Team Members
+                      <span className="text-[10px] text-muted-foreground font-normal">({otherMembers.length})</span>
+                    </div>
+                    <ul className="divide-y divide-border">
+                      {otherMembers.map(u => renderUserRow(u))}
+                    </ul>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </DialogContent>
       </Dialog>

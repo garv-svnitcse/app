@@ -63,15 +63,93 @@ async def create_channel(payload: ChannelIn,
     return serialize(doc)
 
 
+HIGH_ROLES = {"Founder", "Admin", "Manager"}
+HIGH_DESIGNATION_KEYWORDS = {
+    "founder", "ceo", "cto", "coo", "cfo", "chief", "director", "head",
+    "president", "vp", "vice president", "manager", "lead", "general manager"
+}
+
+
+def is_high_designation_user(user_dict_or_obj) -> bool:
+    role = getattr(user_dict_or_obj, "role", None) or (user_dict_or_obj.get("role") if isinstance(user_dict_or_obj, dict) else None)
+    if role in HIGH_ROLES:
+        return True
+    designation = (
+        getattr(user_dict_or_obj, "designation", None) or
+        (user_dict_or_obj.get("designation") if isinstance(user_dict_or_obj, dict) else None) or ""
+    ).lower()
+    return any(k in designation for k in HIGH_DESIGNATION_KEYWORDS)
+
+
+@router.get("/dm-users", response_model=list[UserPublic])
+@router.get("/users", response_model=list[UserPublic])
+async def list_dm_eligible_users(current: UserPublic = Depends(get_current_user)):
+    """List users that the current user is eligible to DM.
+    
+    Respective department members can connect with members of their same department
+    as well as company leadership / high designation personnel.
+    Founders and Admins can connect with anyone across the company.
+    """
+    db = get_db()
+    q = {
+        "_id": {"$ne": oid(current.id)},
+        "status": {"$ne": "deactivated"},
+        "is_active": {"$ne": False},
+    }
+    docs = await db.users.find(q, {"password_hash": 0}).to_list(500)
+
+    if current.role in ("Founder", "Admin"):
+        eligible = docs
+    else:
+        curr_dept = (current.department or "").strip().lower()
+        eligible = []
+        for d in docs:
+            dept = (d.get("department") or "").strip().lower()
+            is_same_dept = bool(curr_dept) and bool(dept) and (dept == curr_dept)
+            is_high_desig = is_high_designation_user(d)
+            if is_same_dept or is_high_desig:
+                eligible.append(d)
+
+    return [
+        UserPublic(
+            id=str(d["_id"]),
+            email=d["email"],
+            name=d["name"],
+            role=d["role"],
+            photo=d.get("photo"),
+            online=d.get("online", False),
+            phone=d.get("phone"),
+            designation=d.get("designation"),
+            department=d.get("department"),
+            status=d.get("status", "active"),
+            is_active=d.get("is_active", True),
+        )
+        for d in eligible
+    ]
+
+
 @router.post("/dm/{peer_id}", status_code=201)
 async def open_dm(peer_id: str, current: UserPublic = Depends(get_current_user)):
-    """Get or create a 1-on-1 DM channel."""
+    """Get or create a 1-on-1 DM channel with permission enforcement."""
     db = get_db()
     if peer_id == current.id:
         raise HTTPException(400, "Cannot DM yourself")
-    peer = await db.users.find_one({"_id": oid(peer_id)}, {"name": 1})
+    peer = await db.users.find_one(
+        {"_id": oid(peer_id)},
+        {"name": 1, "role": 1, "department": 1, "designation": 1, "status": 1}
+    )
     if not peer:
         raise HTTPException(404, "User not found")
+
+    # Respective department members connect with same department and high designation personnel
+    if current.role not in ("Founder", "Admin"):
+        curr_dept = (current.department or "").strip().lower()
+        peer_dept = (peer.get("department") or "").strip().lower()
+        is_same_dept = bool(curr_dept) and bool(peer_dept) and (curr_dept == peer_dept)
+        is_high_desig = is_high_designation_user(peer)
+        if not (is_same_dept or is_high_desig):
+            raise HTTPException(403, "You can only message members of your department or company leadership.")
+
     existing = await db.channels.find_one({
         "kind": "dm",
         "members": {"$all": [current.id, peer_id], "$size": 2},

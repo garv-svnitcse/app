@@ -440,6 +440,23 @@ def test_connect_dm_open(founder_h, employee_user):
     assert r2.json()["id"] == dm["id"]
 
 
+def test_connect_dm_users_department_and_high_designation(employee_h):
+    r = requests.get(f"{API}/connect/dm-users", headers=employee_h)
+    assert r.status_code == 200, r.text
+    users = r.json()
+    assert len(users) >= 1
+    me = requests.get(f"{API}/auth/me", headers=employee_h).json()
+    emp_dept = (me.get("department") or "").strip().lower()
+    for u in users:
+        u_dept = (u.get("department") or "").strip().lower()
+        is_same_dept = bool(emp_dept) and bool(u_dept) and (emp_dept == u_dept)
+        is_high = u.get("role") in ("Founder", "Admin", "Manager") or any(
+            k in (u.get("designation") or "").lower()
+            for k in ["founder", "ceo", "cto", "coo", "cfo", "director", "head", "manager", "lead", "chief"]
+        )
+        assert is_same_dept or is_high, f"User {u['name']} (role={u['role']}, dept={u.get('department')}) should not be visible to employee in {emp_dept}"
+
+
 # ============ Activity trail integration ============
 
 def test_activity_captures_task_and_opp(founder_h):
