@@ -11,13 +11,72 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Plus, ClipboardList, CheckCircle2, Clock, Sparkles, Calendar as CalIcon, MessageSquare, Trash2, FileText, Paperclip, Download, X, ExternalLink, Github, Linkedin, Link as LinkIcon, Loader2 } from "lucide-react";
+import { Plus, ClipboardList, CheckCircle2, Clock, Sparkles, Calendar as CalIcon, MessageSquare, Trash2, FileText, Paperclip, Download, X, ExternalLink, Github, Linkedin, Link as LinkIcon, Loader2, List, LayoutGrid, ArrowUpDown, Calendar } from "lucide-react";
 import { api, formatApiError } from "@/lib/api";
 import { usePermission } from "@/hooks/usePermission";
 import { toast } from "sonner";
 
 const STATUS_ORDER = ["todo", "in_progress", "review", "completed", "cancelled"];
 const STATUS_LABEL = { todo: "To do", in_progress: "In progress", review: "Review", completed: "Completed", cancelled: "Cancelled" };
+
+function formatDateBadge(t) {
+  const dStr = t.due_date || t.created_at;
+  if (!dStr) {
+    return <span className="text-[12px] text-muted-foreground">---</span>;
+  }
+  const d = new Date(dStr);
+  if (isNaN(d.getTime())) {
+    return <span className="text-[12px] text-muted-foreground">---</span>;
+  }
+
+  const now = new Date();
+  const isToday = d.toDateString() === now.toDateString();
+
+  const tomorrow = new Date(now);
+  tomorrow.setDate(now.getDate() + 1);
+  const isTomorrow = d.toDateString() === tomorrow.toDateString();
+
+  const yesterday = new Date(now);
+  yesterday.setDate(now.getDate() - 1);
+  const isYesterday = d.toDateString() === yesterday.toDateString();
+
+  const isOverdue = t.due_date && d < new Date(now.getFullYear(), now.getMonth(), now.getDate()) && t.status !== "completed" && t.status !== "cancelled";
+
+  if (isToday) {
+    return (
+      <Badge className="bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-300 dark:border-emerald-800 text-[11px] font-medium gap-1 shrink-0">
+        <Clock className="h-3 w-3" /> Today
+      </Badge>
+    );
+  }
+  if (isTomorrow) {
+    return (
+      <Badge variant="outline" className="bg-blue-500/10 text-blue-600 border-blue-200 dark:border-blue-800 text-[11px] font-medium shrink-0">
+        Tomorrow
+      </Badge>
+    );
+  }
+  if (isYesterday) {
+    return (
+      <Badge variant="outline" className="bg-amber-500/10 text-amber-600 border-amber-200 dark:border-amber-800 text-[11px] font-medium shrink-0">
+        Yesterday
+      </Badge>
+    );
+  }
+  if (isOverdue) {
+    return (
+      <Badge variant="destructive" className="text-[11px] font-medium shrink-0">
+        Overdue · {d.toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+      </Badge>
+    );
+  }
+
+  return (
+    <span className="text-[12px] text-foreground/85 font-medium shrink-0" title={d.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}>
+      {t.due_date ? `Due ${d.toLocaleDateString("en-IN", { day: "numeric", month: "short" })}` : d.toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+    </span>
+  );
+}
 
 function initials(name) {
   return (name || "?").split(" ").map(s => s[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
@@ -214,11 +273,69 @@ export default function TaskBoard() {
     }
   }, [searchParams]);
 
+  const [sortBy, setSortBy] = useState("current-first");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [moduleFilter, setModuleFilter] = useState("all");
+
+  const modules = useMemo(() => {
+    const set = new Set(["General"]);
+    tasks.forEach(t => { if (t.module) set.add(t.module); });
+    return Array.from(set);
+  }, [tasks]);
+
   const filtered = useMemo(() => {
-    if (!q) return tasks;
-    const t = q.toLowerCase();
-    return tasks.filter(x => JSON.stringify(x).toLowerCase().includes(t));
-  }, [tasks, q]);
+    let list = tasks;
+    if (q) {
+      const t = q.toLowerCase();
+      list = list.filter(x => JSON.stringify(x).toLowerCase().includes(t));
+    }
+    if (statusFilter !== "all") {
+      list = list.filter(x => x.status === statusFilter);
+    }
+    if (moduleFilter !== "all") {
+      list = list.filter(x => x.module === moduleFilter);
+    }
+
+    const now = new Date();
+    const isDateToday = (dStr) => {
+      if (!dStr) return false;
+      const d = new Date(dStr);
+      return !isNaN(d.getTime()) && d.toDateString() === now.toDateString();
+    };
+
+    const getTaskTime = (t) => {
+      const d = t.due_date || t.created_at;
+      return d ? new Date(d).getTime() : 0;
+    };
+
+    return [...list].sort((a, b) => {
+      if (sortBy === "current-first") {
+        // Today / current tasks on top
+        const aToday = isDateToday(a.due_date) || isDateToday(a.created_at);
+        const bToday = isDateToday(b.due_date) || isDateToday(b.created_at);
+        if (aToday && !bToday) return -1;
+        if (!aToday && bToday) return 1;
+        // Then newest / latest dates first
+        return getTaskTime(b) - getTaskTime(a);
+      }
+      if (sortBy === "date-asc") {
+        return getTaskTime(a) - getTaskTime(b);
+      }
+      if (sortBy === "due-urgent") {
+        const dueA = a.due_date ? new Date(a.due_date).getTime() : Infinity;
+        const dueB = b.due_date ? new Date(b.due_date).getTime() : Infinity;
+        return dueA - dueB;
+      }
+      if (sortBy === "priority-desc") {
+        const pMap = { urgent: 4, high: 3, medium: 2, low: 1 };
+        return (pMap[b.priority] || 0) - (pMap[a.priority] || 0);
+      }
+      if (sortBy === "title-asc") {
+        return (a.title || "").localeCompare(b.title || "");
+      }
+      return getTaskTime(b) - getTaskTime(a);
+    });
+  }, [tasks, q, statusFilter, moduleFilter, sortBy]);
 
   const byStatus = useMemo(() => {
     const m = Object.fromEntries(STATUS_ORDER.map(s => [s, []]));
@@ -388,14 +505,137 @@ export default function TaskBoard() {
         </div>
       )}
 
-      <Input placeholder="Filter tasks by title, assignee, module…" value={q} onChange={(e) => setQ(e.target.value)} className="max-w-md" data-testid="task-search" />
+      <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+        <div className="flex-1 flex flex-wrap items-center gap-2.5">
+          <Input
+            placeholder="Filter tasks by title, assignee, module…"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            className="w-full sm:max-w-xs h-9 text-[13px]"
+            data-testid="task-search"
+          />
 
-      <Tabs defaultValue="kanban">
-        <TabsList>
-          <TabsTrigger value="kanban" data-testid="task-tab-kanban">Kanban</TabsTrigger>
-          <TabsTrigger value="list" data-testid="task-tab-list">List</TabsTrigger>
-          <TabsTrigger value="calendar" data-testid="task-tab-calendar">Calendar</TabsTrigger>
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="w-[130px] h-9 text-[12.5px]">
+              <SelectValue placeholder="Status" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Statuses</SelectItem>
+              {STATUS_ORDER.map(s => (
+                <SelectItem key={s} value={s}>{STATUS_LABEL[s] || s}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+
+          <Select value={moduleFilter} onValueChange={setModuleFilter}>
+            <SelectTrigger className="w-[130px] h-9 text-[12.5px]">
+              <SelectValue placeholder="Module" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Modules</SelectItem>
+              {modules.map(m => (
+                <SelectItem key={m} value={m}>{m}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <div className="flex items-center gap-2 shrink-0">
+          <span className="text-[12px] text-muted-foreground flex items-center gap-1">
+            <ArrowUpDown className="h-3.5 w-3.5" /> Sort:
+          </span>
+          <Select value={sortBy} onValueChange={setSortBy}>
+            <SelectTrigger className="w-[185px] h-9 text-[12.5px]">
+              <SelectValue placeholder="Sort order" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="current-first">Current / Newest first</SelectItem>
+              <SelectItem value="date-asc">Oldest first</SelectItem>
+              <SelectItem value="due-urgent">Due Date (Urgent)</SelectItem>
+              <SelectItem value="priority-desc">Priority (High to Low)</SelectItem>
+              <SelectItem value="title-asc">Title (A to Z)</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
+      </div>
+
+      <Tabs defaultValue="list">
+        <TabsList className="bg-muted/60 p-1">
+          <TabsTrigger value="list" data-testid="task-tab-list" className="gap-1.5">
+            <List className="h-4 w-4" /> List
+          </TabsTrigger>
+          <TabsTrigger value="kanban" data-testid="task-tab-kanban" className="gap-1.5">
+            <LayoutGrid className="h-4 w-4" /> Kanban
+          </TabsTrigger>
+          <TabsTrigger value="calendar" data-testid="task-tab-calendar" className="gap-1.5">
+            <CalIcon className="h-4 w-4" /> Calendar
+          </TabsTrigger>
         </TabsList>
+
+        <TabsContent value="list" className="mt-4">
+          <Card className="border-border">
+            {filtered.length === 0 ? (
+              <EmptyState icon={ClipboardList} title="No tasks match your filter" />
+            ) : (
+              <div>
+                <div className="hidden sm:grid sm:grid-cols-12 gap-4 px-5 py-3 bg-muted/40 text-[11.5px] font-semibold text-muted-foreground uppercase tracking-wider border-b border-border">
+                  <div className="col-span-6">Task Title & Details</div>
+                  <div className="col-span-2">Date / Due</div>
+                  <div className="col-span-2">Priority</div>
+                  <div className="col-span-2 text-right">Status</div>
+                </div>
+                <div className="divide-y divide-border">
+                  {filtered.map(t => (
+                    <div
+                      key={t.id}
+                      onClick={() => openDetail(t)}
+                      className="flex flex-col sm:grid sm:grid-cols-12 gap-3 sm:gap-4 px-5 py-3.5 hover:bg-muted/40 transition-colors cursor-pointer items-start sm:items-center"
+                    >
+                      <div className="col-span-6 min-w-0">
+                        <div className="text-[13.5px] font-medium truncate flex items-center gap-2">
+                          <span className="truncate">{t.title}</span>
+                          {t.attachments?.length > 0 && (
+                            <Badge variant="outline" className="text-[10px] gap-1 bg-red-500/10 text-red-600 border-red-200 font-normal shrink-0">
+                              <FileText className="h-3 w-3" /> PDF
+                            </Badge>
+                          )}
+                          {t.link && (
+                            <Badge variant="outline" className="text-[10px] gap-1 bg-primary/10 text-primary border-primary/20 font-normal shrink-0">
+                              {getLinkIcon(t.link)} {getLinkLabel(t.link)}
+                            </Badge>
+                          )}
+                        </div>
+                        <div className="text-[11.5px] text-muted-foreground flex items-center gap-2 mt-0.5">
+                          <span className="font-medium text-foreground/75">{t.module}</span>
+                          <span>·</span>
+                          <span className="flex items-center gap-1.5">
+                            <Avatar className="h-4 w-4 text-[9px]">
+                              {t.assignee_photo ? <AvatarImage src={t.assignee_photo} /> : null}
+                              <AvatarFallback className="text-[9px]">{initials(t.assignee_name)}</AvatarFallback>
+                            </Avatar>
+                            {t.assignee_name || "Unassigned"}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="col-span-2 flex items-center">
+                        {formatDateBadge(t)}
+                      </div>
+
+                      <div className="col-span-2 flex items-center">
+                        <StatusPill status={t.priority} />
+                      </div>
+
+                      <div className="col-span-2 flex justify-end items-center">
+                        <StatusPill status={t.status} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </Card>
+        </TabsContent>
 
         <TabsContent value="kanban" className="mt-4">
           <div className="flex gap-3 overflow-x-auto scrollbar-thin pb-4">
@@ -411,43 +651,6 @@ export default function TaskBoard() {
               />
             ))}
           </div>
-        </TabsContent>
-
-        <TabsContent value="list" className="mt-4">
-          <Card className="border-border">
-            {filtered.length === 0 ? (
-              <EmptyState icon={ClipboardList} title="No tasks match your filter" />
-            ) : (
-              <div className="divide-y divide-border">
-                {filtered.map(t => (
-                  <div key={t.id} onClick={() => openDetail(t)} className="flex items-center gap-4 px-4 py-3 hover:bg-muted/40 cursor-pointer">
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[13.5px] font-medium truncate flex items-center gap-2">
-                        <span>{t.title}</span>
-                        {t.attachments?.length > 0 && (
-                          <Badge variant="outline" className="text-[10px] gap-1 bg-red-500/10 text-red-600 border-red-200 font-normal">
-                            <FileText className="h-3 w-3" /> PDF
-                          </Badge>
-                        )}
-                      </div>
-                      <div className="text-[11.5px] text-muted-foreground">{t.module} · {t.assignee_name || "Unassigned"}</div>
-                    </div>
-                    <div className="w-[110px] flex justify-end shrink-0">
-                      <StatusPill status={t.status} />
-                    </div>
-                    <div className="w-[85px] flex justify-end shrink-0">
-                      <StatusPill status={t.priority} />
-                    </div>
-                    <div className="text-[12px] text-muted-foreground hidden sm:block w-[60px] text-right shrink-0">
-                      {t.due_date 
-                        ? new Date(t.due_date).toLocaleDateString("en-IN", { day: "numeric", month: "short" })
-                        : "---"}
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-          </Card>
         </TabsContent>
 
         <TabsContent value="calendar" className="mt-4">
