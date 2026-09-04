@@ -12,6 +12,7 @@ from bson import ObjectId
 from db import get_db
 from auth_utils import get_current_user
 from models import UserPublic
+from hub_utils import role_notification_filter
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
 
@@ -72,7 +73,8 @@ async def _personal_stats(db, current: UserPublic):
                 "probability": {"open": 30, "assigned": 50, "in_progress": 65}.get(o["status"], 40),
             })
 
-    notif_docs = await db.notifications.find({"$or": [{"user_id": uid}, {"user_id": None}]}).sort("created_at", -1).to_list(5)
+    notif_q = role_notification_filter(current.role, uid)
+    notif_docs = await db.notifications.find(notif_q).sort("created_at", -1).to_list(5)
     recent_notifications = [{
         "id": str(n["_id"]), "title": n["title"], "body": n["body"], "kind": n.get("kind", "info"),
         "read": n.get("read", False), "created_at": n.get("created_at"),
@@ -234,7 +236,8 @@ async def stats(current: UserPublic = Depends(get_current_user)):
         ]
 
     # Recent notifications (last 5)
-    notif_docs = await db.notifications.find().sort("created_at", -1).to_list(5)
+    notif_q = role_notification_filter(current.role, current.id)
+    notif_docs = await db.notifications.find(notif_q).sort("created_at", -1).to_list(5)
     recent_notifications = [{
         "id": str(n["_id"]), "title": n["title"], "body": n["body"], "kind": n.get("kind", "info"),
         "read": n.get("read", False), "created_at": n.get("created_at"),

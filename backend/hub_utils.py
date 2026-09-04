@@ -66,3 +66,40 @@ async def notify(db, user_id: str | None, title: str, body: str, kind: str = "in
         "link": link,
         "created_at": utc_iso(),
     })
+
+
+def role_notification_filter(user_role: str, user_id: str) -> dict:
+    """Filter notifications by role so employee-specific details are kept private.
+    
+    - Employees & Interns:
+      Can only see:
+      1. Notifications explicitly targeted to them (user_id == user_id)
+      2. General company announcements or teammate joined notices (user_id == None),
+         never other employees' leave requests or private details.
+    - Managers:
+      Can see notifications targeted to them and general broadcasts (excluding cross-department leave requests).
+    - Founders & Admins:
+      Can see all notifications targeted to them or general system broadcasts.
+    """
+    if user_role in ("Employee", "Intern"):
+        return {
+            "$or": [
+                {"user_id": user_id},
+                {
+                    "user_id": None,
+                    "title": {"$regex": "^(New teammate joined|Announcement)", "$options": "i"},
+                },
+            ]
+        }
+    elif user_role == "Manager":
+        return {
+            "$or": [
+                {"user_id": user_id},
+                {
+                    "user_id": None,
+                    "title": {"$not": {"$regex": "^Leave request", "$options": "i"}},
+                },
+            ]
+        }
+    else:
+        return {"$or": [{"user_id": user_id}, {"user_id": None}]}
