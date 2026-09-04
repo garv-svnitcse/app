@@ -27,6 +27,8 @@ const KPI_ICONS = {
   revenue: IndianRupee, revenue_today: IndianRupee, revenue_week: IndianRupee,
   bookings: Bike, bookings_today: Bike, active_bookings: Zap,
   customers: Users, vehicles: Building2, vendors: Handshake,
+  my_todo: ClipboardList, my_in_progress: Zap, my_review: Target,
+  my_completed: CheckCircle2, my_leave: Bell,
 };
 
 function formatValue(k) {
@@ -81,6 +83,8 @@ export default function Dashboard() {
     low: "text-info bg-info/10",
   };
 
+  const isEmployeeOrIntern = user?.role === "Employee" || user?.role === "Intern";
+
   return (
     <div data-testid={DASHBOARD.root} className="space-y-8">
       {/* Header */}
@@ -93,13 +97,17 @@ export default function Dashboard() {
             Welcome back, {(user?.name || "").split(" ")[0] || "there"}.
           </h1>
           <p className="text-sm text-muted-foreground mt-2 max-w-xl">
-            A live view of every city, vehicle and rupee moving through WavyGo Mobility. Updated moments ago.
+            {isEmployeeOrIntern
+              ? "A summary of your tasks, pending leaves, and recent updates across the workspace."
+              : "A live view of every city, vehicle and rupee moving through WavyGo Mobility. Updated moments ago."}
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => nav("/analytics")} className="h-9">
-            Full analytics <ArrowUpRight className="ml-1.5 h-3.5 w-3.5" />
-          </Button>
+          {!isEmployeeOrIntern && (
+            <Button variant="outline" onClick={() => nav("/analytics")} className="h-9">
+              Full analytics <ArrowUpRight className="ml-1.5 h-3.5 w-3.5" />
+            </Button>
+          )}
         </div>
       </div>
 
@@ -116,13 +124,15 @@ export default function Dashboard() {
                     <div className="h-9 w-9 rounded-md bg-primary/10 text-primary flex items-center justify-center">
                       <Icon className="h-4.5 w-4.5" strokeWidth={2} />
                     </div>
-                    <span className={cn(
-                      "inline-flex items-center gap-1 text-[11px] font-semibold px-1.5 py-0.5 rounded",
-                      positive ? "text-success bg-success/10" : "text-destructive bg-destructive/10"
-                    )}>
-                      {positive ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-                      {positive ? "+" : ""}{k.delta}%
-                    </span>
+                    {k.delta !== 0 && (
+                      <span className={cn(
+                        "inline-flex items-center gap-1 text-[11px] font-semibold px-1.5 py-0.5 rounded",
+                        positive ? "text-success bg-success/10" : "text-destructive bg-destructive/10"
+                      )}>
+                        {positive ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+                        {positive ? "+" : ""}{k.delta}%
+                      </span>
+                    )}
                   </div>
                   <div className="mt-4">
                     <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">{k.label}</div>
@@ -138,102 +148,106 @@ export default function Dashboard() {
       </div>
 
       {/* Charts row */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Card data-testid={DASHBOARD.revenueChart} className="lg:col-span-2 border-border">
-          <CardHeader className="pb-2">
-            <div className="flex items-start justify-between">
-              <div>
-                <CardTitle className="font-display text-[17px]">Revenue trajectory</CardTitle>
-                <CardDescription>Monthly revenue vs target · ₹ in lakhs</CardDescription>
+      {!isEmployeeOrIntern && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <Card data-testid={DASHBOARD.revenueChart} className="lg:col-span-2 border-border">
+            <CardHeader className="pb-2">
+              <div className="flex items-start justify-between">
+                <div>
+                  <CardTitle className="font-display text-[17px]">Revenue trajectory</CardTitle>
+                  <CardDescription>Monthly revenue vs target · ₹ in lakhs</CardDescription>
+                </div>
+                <Badge variant="secondary" className="text-[10px]">6M</Badge>
               </div>
-              <Badge variant="secondary" className="text-[10px]">6M</Badge>
-            </div>
-          </CardHeader>
-          <CardContent className="pt-2">
-            <div className="h-[260px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={data.revenue_series} margin={{ top: 10, right: 20, left: -10, bottom: 0 }}>
-                  <defs>
-                    <linearGradient id="revFill" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="hsl(var(--chart-1))" stopOpacity={0.35} />
-                      <stop offset="100%" stopColor="hsl(var(--chart-1))" stopOpacity={0} />
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="month" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} axisLine={false} tickLine={false} />
-                  <Tooltip content={<ChartTooltip unit="L" />} cursor={{ stroke: "hsl(var(--border))" }} />
-                  <Area type="monotone" dataKey="target" stroke="hsl(var(--muted-foreground))" strokeDasharray="4 4" fill="transparent" strokeWidth={1.5} />
-                  <Area type="monotone" dataKey="revenue" stroke="hsl(var(--chart-1))" fill="url(#revFill)" strokeWidth={2.5} />
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
+            </CardHeader>
+            <CardContent className="pt-2">
+              <div className="h-[260px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={data.revenue_series} margin={{ top: 10, right: 20, left: -10, bottom: 0 }}>
+                    <defs>
+                      <linearGradient id="revFill" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="hsl(var(--chart-1))" stopOpacity={0.35} />
+                        <stop offset="100%" stopColor="hsl(var(--chart-1))" stopOpacity={0} />
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="month" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} axisLine={false} tickLine={false} />
+                    <Tooltip content={<ChartTooltip unit="L" />} cursor={{ stroke: "hsl(var(--border))" }} />
+                    <Area type="monotone" dataKey="target" stroke="hsl(var(--muted-foreground))" strokeDasharray="4 4" fill="transparent" strokeWidth={1.5} />
+                    <Area type="monotone" dataKey="revenue" stroke="hsl(var(--chart-1))" fill="url(#revFill)" strokeWidth={2.5} />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </CardContent>
+          </Card>
 
-        <Card data-testid={DASHBOARD.bookingsChart} className="border-border">
-          <CardHeader className="pb-2">
-            <CardTitle className="font-display text-[17px]">Bookings this week</CardTitle>
-            <CardDescription>Daily volume across all cities</CardDescription>
-          </CardHeader>
-          <CardContent className="pt-2">
-            <div className="h-[260px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={data.bookings_series} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
-                  <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
-                  <XAxis dataKey="day" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} axisLine={false} tickLine={false} />
-                  <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} axisLine={false} tickLine={false} />
-                  <Tooltip content={<ChartTooltip />} cursor={{ fill: "hsl(var(--muted) / 0.5)" }} />
-                  <Bar dataKey="bookings" fill="hsl(var(--chart-1))" radius={[6, 6, 0, 0]} maxBarSize={28} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+          <Card data-testid={DASHBOARD.bookingsChart} className="border-border">
+            <CardHeader className="pb-2">
+              <CardTitle className="font-display text-[17px]">Bookings this week</CardTitle>
+              <CardDescription>Daily volume across all cities</CardDescription>
+            </CardHeader>
+            <CardContent className="pt-2">
+              <div className="h-[260px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={data.bookings_series} margin={{ top: 10, right: 10, left: -10, bottom: 0 }}>
+                    <CartesianGrid stroke="hsl(var(--border))" strokeDasharray="3 3" vertical={false} />
+                    <XAxis dataKey="day" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} axisLine={false} tickLine={false} />
+                    <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} axisLine={false} tickLine={false} />
+                    <Tooltip content={<ChartTooltip />} cursor={{ fill: "hsl(var(--muted) / 0.5)" }} />
+                    <Bar dataKey="bookings" fill="hsl(var(--chart-1))" radius={[6, 6, 0, 0]} maxBarSize={28} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
+      )}
 
       {/* Row: City table + tasks */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Card data-testid={DASHBOARD.cityTable} className="lg:col-span-2 border-border">
-          <CardHeader className="pb-2">
-            <div className="flex items-start justify-between">
-              <div>
-                <CardTitle className="font-display text-[17px]">City performance</CardTitle>
-                <CardDescription>Live view · sorted by revenue</CardDescription>
+      <div className={cn("grid grid-cols-1 gap-4", !isEmployeeOrIntern ? "lg:grid-cols-3" : "")}>
+        {!isEmployeeOrIntern && (
+          <Card data-testid={DASHBOARD.cityTable} className="lg:col-span-2 border-border">
+            <CardHeader className="pb-2">
+              <div className="flex items-start justify-between">
+                <div>
+                  <CardTitle className="font-display text-[17px]">City performance</CardTitle>
+                  <CardDescription>Live view · sorted by revenue</CardDescription>
+                </div>
+                <Button variant="ghost" size="sm" onClick={() => nav("/analytics")} className="text-xs">View all</Button>
               </div>
-              <Button variant="ghost" size="sm" onClick={() => nav("/analytics")} className="text-xs">View all</Button>
-            </div>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <Table>
-              <TableHeader>
-                <TableRow className="border-border hover:bg-transparent">
-                  <TableHead className="text-[11px] uppercase tracking-[0.1em]">City</TableHead>
-                  <TableHead className="text-[11px] uppercase tracking-[0.1em] text-right">Bookings</TableHead>
-                  <TableHead className="text-[11px] uppercase tracking-[0.1em] text-right">Revenue (L)</TableHead>
-                  <TableHead className="text-[11px] uppercase tracking-[0.1em] w-[140px]">Growth</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {data.cities.map((c) => (
-                  <TableRow key={c.city} className="border-border">
-                    <TableCell className="font-medium text-foreground">{c.city}</TableCell>
-                    <TableCell className="text-right text-muted-foreground">{c.bookings.toLocaleString("en-IN")}</TableCell>
-                    <TableCell className="text-right font-medium text-foreground">₹{c.revenue}</TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <Progress value={Math.min(100, c.growth * 6)} className="h-1.5" />
-                        <span className="text-[11.5px] text-success font-medium min-w-[38px] text-right">+{c.growth}%</span>
-                      </div>
-                    </TableCell>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <Table>
+                <TableHeader>
+                  <TableRow className="border-border hover:bg-transparent">
+                    <TableHead className="text-[11px] uppercase tracking-[0.1em]">City</TableHead>
+                    <TableHead className="text-[11px] uppercase tracking-[0.1em] text-right">Bookings</TableHead>
+                    <TableHead className="text-[11px] uppercase tracking-[0.1em] text-right">Revenue (L)</TableHead>
+                    <TableHead className="text-[11px] uppercase tracking-[0.1em] w-[140px]">Growth</TableHead>
                   </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
+                </TableHeader>
+                <TableBody>
+                  {data.cities.map((c) => (
+                    <TableRow key={c.city} className="border-border">
+                      <TableCell className="font-medium text-foreground">{c.city}</TableCell>
+                      <TableCell className="text-right text-muted-foreground">{c.bookings.toLocaleString("en-IN")}</TableCell>
+                      <TableCell className="text-right font-medium text-foreground">₹{c.revenue}</TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <Progress value={Math.min(100, c.growth * 6)} className="h-1.5" />
+                          <span className="text-[11.5px] text-success font-medium min-w-[38px] text-right">+{c.growth}%</span>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        )}
 
-        <Card data-testid={DASHBOARD.tasksList} className="border-border">
+        <Card data-testid={DASHBOARD.tasksList} className={cn("border-border", isEmployeeOrIntern ? "col-span-full" : "")}>
           <CardHeader className="pb-2">
             <div className="flex items-start justify-between">
               <div>
@@ -263,117 +277,121 @@ export default function Dashboard() {
       </div>
 
       {/* Row: Quick actions + Calendar + Activity */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <Card data-testid={DASHBOARD.quickActions} className="border-border">
-          <CardHeader className="pb-2">
-            <CardTitle className="font-display text-[17px]">Quick actions</CardTitle>
-            <CardDescription>Most-used flows for founders</CardDescription>
-          </CardHeader>
-          <CardContent className="pt-2">
-            <div className="grid grid-cols-2 gap-2">
-              {[
-                { icon: Plus, label: "New booking", to: "/marketplace" },
-                { icon: Handshake, label: "Onboard vendor", to: "/marketplace" },
-                { icon: Target, label: "Log opportunity", to: "/opportunity-hub" },
-                { icon: Bell, label: "Announce update", to: "/wavygo-connect" },
-              ].map((a) => {
-                const Icon = a.icon;
-                return (
-                  <button key={a.label} onClick={() => nav(a.to)}
-                          className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-[13px] text-foreground hover:border-primary/40 hover:bg-primary/[0.03] transition-colors">
-                    <Icon className="h-4 w-4 text-primary" />{a.label}
-                  </button>
-                );
-              })}
-            </div>
-          </CardContent>
-        </Card>
+      {!isEmployeeOrIntern && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <Card data-testid={DASHBOARD.quickActions} className="border-border">
+            <CardHeader className="pb-2">
+              <CardTitle className="font-display text-[17px]">Quick actions</CardTitle>
+              <CardDescription>Most-used flows for founders</CardDescription>
+            </CardHeader>
+            <CardContent className="pt-2">
+              <div className="grid grid-cols-2 gap-2">
+                {[
+                  { icon: Plus, label: "New booking", to: "/marketplace" },
+                  { icon: Handshake, label: "Onboard vendor", to: "/marketplace" },
+                  { icon: Target, label: "Log opportunity", to: "/opportunity-hub" },
+                  { icon: Bell, label: "Announce update", to: "/wavygo-connect" },
+                ].map((a) => {
+                  const Icon = a.icon;
+                  return (
+                    <button key={a.label} onClick={() => nav(a.to)}
+                            className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-[13px] text-foreground hover:border-primary/40 hover:bg-primary/[0.03] transition-colors">
+                      <Icon className="h-4 w-4 text-primary" />{a.label}
+                    </button>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
 
-        <Card data-testid={DASHBOARD.calendarList} className="border-border">
-          <CardHeader className="pb-2">
-            <CardTitle className="font-display text-[17px]">Upcoming calendar</CardTitle>
-            <CardDescription>Next few days</CardDescription>
-          </CardHeader>
-          <CardContent className="pt-2">
-            <ul className="space-y-3">
-              {data.upcoming_events.map((e) => (
-                <li key={e.id} className="flex items-start gap-3">
-                  <div className="h-9 w-9 rounded-md bg-info/10 text-info flex items-center justify-center shrink-0">
-                    <Circle className="h-2.5 w-2.5 fill-info" />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[13.5px] leading-tight text-foreground">{e.title}</div>
-                    <div className="text-[11.5px] text-muted-foreground mt-1">{e.when}</div>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </CardContent>
-        </Card>
+          <Card data-testid={DASHBOARD.calendarList} className="border-border">
+            <CardHeader className="pb-2">
+              <CardTitle className="font-display text-[17px]">Upcoming calendar</CardTitle>
+              <CardDescription>Next few days</CardDescription>
+            </CardHeader>
+            <CardContent className="pt-2">
+              <ul className="space-y-3">
+                {data.upcoming_events.map((e) => (
+                  <li key={e.id} className="flex items-start gap-3">
+                    <div className="h-9 w-9 rounded-md bg-info/10 text-info flex items-center justify-center shrink-0">
+                      <Circle className="h-2.5 w-2.5 fill-info" />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <div className="text-[13.5px] leading-tight text-foreground">{e.title}</div>
+                      <div className="text-[11.5px] text-muted-foreground mt-1">{e.when}</div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
 
-        <Card data-testid={DASHBOARD.activityFeed} className="border-border">
+          <Card data-testid={DASHBOARD.activityFeed} className="border-border">
+            <CardHeader className="pb-2">
+              <div className="flex items-start justify-between">
+                <div>
+                  <CardTitle className="font-display text-[17px]">Recent activity</CardTitle>
+                  <CardDescription>Team + system events</CardDescription>
+                </div>
+                <ScrollText className="h-4 w-4 text-muted-foreground" />
+              </div>
+            </CardHeader>
+            <CardContent className="pt-2">
+              <ul className="space-y-3">
+                {activity.slice(0, 6).map((a) => (
+                  <li key={a.id} className="flex items-start gap-3">
+                    <div className="h-6 w-6 rounded-full bg-primary/10 text-primary flex items-center justify-center text-[10px] font-semibold shrink-0">
+                      {(a.user_name || "?").split(" ").map(s => s[0]).slice(0, 2).join("")}
+                    </div>
+                    <div className="text-[13px] leading-tight">
+                      <span className="font-medium text-foreground">{a.user_name}</span>{" "}
+                      <span className="text-muted-foreground">{a.action.toLowerCase()}</span>{" "}
+                      {a.target && <span className="text-foreground">· {a.target}</span>}
+                      <div className="text-[11px] text-muted-foreground mt-0.5">{a.module} · {(() => { try { return formatDistanceToNow(new Date(a.created_at), { addSuffix: true }); } catch { return ""; } })()}</div>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </CardContent>
+          </Card>
+        </div>
+      )}
+
+      {/* Opportunities */}
+      {!isEmployeeOrIntern && (
+        <Card data-testid={DASHBOARD.opportunities} className="border-border">
           <CardHeader className="pb-2">
             <div className="flex items-start justify-between">
               <div>
-                <CardTitle className="font-display text-[17px]">Recent activity</CardTitle>
-                <CardDescription>Team + system events</CardDescription>
+                <CardTitle className="font-display text-[17px]">Opportunity summary</CardTitle>
+                <CardDescription>Deals in play · sum ₹{data.opportunities.reduce((a, o) => a + o.value, 0)} L pipeline</CardDescription>
               </div>
-              <ScrollText className="h-4 w-4 text-muted-foreground" />
+              <Button variant="ghost" size="sm" onClick={() => nav("/opportunity-hub")} className="text-xs">Open hub</Button>
             </div>
           </CardHeader>
           <CardContent className="pt-2">
-            <ul className="space-y-3">
-              {activity.slice(0, 6).map((a) => (
-                <li key={a.id} className="flex items-start gap-3">
-                  <div className="h-6 w-6 rounded-full bg-primary/10 text-primary flex items-center justify-center text-[10px] font-semibold shrink-0">
-                    {(a.user_name || "?").split(" ").map(s => s[0]).slice(0, 2).join("")}
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {data.opportunities.map((o) => (
+                <div key={o.id} className="p-4 rounded-lg border border-border bg-card hover-lift">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="text-[13px] font-semibold text-foreground">{o.title}</div>
+                      <div className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground mt-1">{o.stage}</div>
+                    </div>
+                    <Badge className="bg-primary/10 text-primary hover:bg-primary/10">₹{o.value}L</Badge>
                   </div>
-                  <div className="text-[13px] leading-tight">
-                    <span className="font-medium text-foreground">{a.user_name}</span>{" "}
-                    <span className="text-muted-foreground">{a.action.toLowerCase()}</span>{" "}
-                    {a.target && <span className="text-foreground">· {a.target}</span>}
-                    <div className="text-[11px] text-muted-foreground mt-0.5">{a.module} · {(() => { try { return formatDistanceToNow(new Date(a.created_at), { addSuffix: true }); } catch { return ""; } })()}</div>
+                  <div className="mt-4">
+                    <div className="flex items-center justify-between text-[11px] text-muted-foreground mb-1.5">
+                      <span>Probability</span><span className="font-medium text-foreground">{o.probability}%</span>
+                    </div>
+                    <Progress value={o.probability} className="h-1.5" />
                   </div>
-                </li>
+                </div>
               ))}
-            </ul>
+            </div>
           </CardContent>
         </Card>
-      </div>
-
-      {/* Opportunities */}
-      <Card data-testid={DASHBOARD.opportunities} className="border-border">
-        <CardHeader className="pb-2">
-          <div className="flex items-start justify-between">
-            <div>
-              <CardTitle className="font-display text-[17px]">Opportunity summary</CardTitle>
-              <CardDescription>Deals in play · sum ₹{data.opportunities.reduce((a, o) => a + o.value, 0)} L pipeline</CardDescription>
-            </div>
-            <Button variant="ghost" size="sm" onClick={() => nav("/opportunity-hub")} className="text-xs">Open hub</Button>
-          </div>
-        </CardHeader>
-        <CardContent className="pt-2">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {data.opportunities.map((o) => (
-              <div key={o.id} className="p-4 rounded-lg border border-border bg-card hover-lift">
-                <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <div className="text-[13px] font-semibold text-foreground">{o.title}</div>
-                    <div className="text-[11px] uppercase tracking-[0.1em] text-muted-foreground mt-1">{o.stage}</div>
-                  </div>
-                  <Badge className="bg-primary/10 text-primary hover:bg-primary/10">₹{o.value}L</Badge>
-                </div>
-                <div className="mt-4">
-                  <div className="flex items-center justify-between text-[11px] text-muted-foreground mb-1.5">
-                    <span>Probability</span><span className="font-medium text-foreground">{o.probability}%</span>
-                  </div>
-                  <Progress value={o.probability} className="h-1.5" />
-                </div>
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
+      )}
 
       {/* ------------------ Part 2: Vendor performance + Company Health + System status ------------------ */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
@@ -456,7 +474,7 @@ export default function Dashboard() {
       </div>
 
       {/* ------------------ Part 2: Live system status + Recent notifications ------------------ */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+      <div className={cn("grid grid-cols-1 gap-4", !isEmployeeOrIntern ? "lg:grid-cols-2" : "")}>
         {data.system_status && (
           <Card data-testid="system-status" className="border-border">
             <CardHeader className="pb-2">

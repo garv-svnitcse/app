@@ -16,6 +16,18 @@ async def _dept_ids(db, department):
     return [str(u["_id"]) async for u in db.users.find({"department": department}, {"_id": 1})]
 
 
+def _role_task_filter(current: UserPublic, dept_ids: list[str] | None = None):
+    """Build the same role-based task visibility filter used across endpoints."""
+    if current.role == "Manager":
+        ids = dept_ids or []
+        return {"$or": [{"assignee_id": {"$in": ids}}, {"reporter_id": {"$in": ids}}]}
+    elif current.role == "Employee":
+        return {"$or": [{"assignee_id": current.id}, {"reporter_id": current.id}]}
+    elif current.role == "Intern":
+        return {"assignee_id": current.id}
+    return None
+
+
 @router.get("")
 async def list_tasks(status: str | None = None, assignee_id: str | None = None,
                      module: str | None = None, limit: int = Query(200, ge=1, le=500),
@@ -29,11 +41,9 @@ async def list_tasks(status: str | None = None, assignee_id: str | None = None,
     role_filter = None
     if current.role == "Manager":
         ids = await _dept_ids(db, current.department)
-        role_filter = {"$or": [{"assignee_id": {"$in": ids}}, {"reporter_id": {"$in": ids}}]}
-    elif current.role == "Employee":
-        role_filter = {"$or": [{"assignee_id": current.id}, {"reporter_id": current.id}]}
-    elif current.role == "Intern":
-        role_filter = {"assignee_id": current.id}
+        role_filter = _role_task_filter(current, ids)
+    elif current.role in ("Employee", "Intern"):
+        role_filter = _role_task_filter(current)
 
     if role_filter:
         q = {"$and": [q, role_filter]} if q else role_filter
@@ -187,7 +197,18 @@ async def add_comment(task_id: str, payload: TaskCommentIn, current: UserPublic 
 @router.get("/stats/overview")
 async def task_stats(current: UserPublic = Depends(get_current_user)):
     db = get_db()
-    async def c(q): return await db.tasks.count_documents(q)
+
+    role_filter = None
+    if current.role == "Manager":
+        ids = await _dept_ids(db, current.department)
+        role_filter = _role_task_filter(current, ids)
+    elif current.role in ("Employee", "Intern"):
+        role_filter = _role_task_filter(current)
+
+    async def c(extra: dict):
+        q = {"$and": [extra, role_filter]} if role_filter else extra
+        return await db.tasks.count_documents(q)
+
     return {
         "todo":        await c({"status": "todo"}),
         "in_progress": await c({"status": "in_progress"}),

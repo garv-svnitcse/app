@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, useRef } from "react";
+import { useSearchParams } from "react-router-dom";
 import { PageHeader, StatCard, StatusPill, EmptyState } from "@/components/module/ModulePrimitives";
 import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
@@ -10,7 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Plus, ClipboardList, CheckCircle2, Clock, Sparkles, Calendar as CalIcon, MessageSquare, Trash2, FileText, Paperclip, Download, X, ExternalLink, Github, Linkedin, Link as LinkIcon } from "lucide-react";
+import { Plus, ClipboardList, CheckCircle2, Clock, Sparkles, Calendar as CalIcon, MessageSquare, Trash2, FileText, Paperclip, Download, X, ExternalLink, Github, Linkedin, Link as LinkIcon, Loader2 } from "lucide-react";
 import { api, formatApiError } from "@/lib/api";
 import { usePermission } from "@/hooks/usePermission";
 import { toast } from "sonner";
@@ -35,64 +36,58 @@ function getLinkLabel(url) {
   const l = url.toLowerCase();
   if (l.includes("github.com")) return "GitHub";
   if (l.includes("linkedin.com")) return "LinkedIn";
-  return "Link";
+  return "Reference";
 }
 
-function PdfChip({ url, name, onRemove }) {
-  const displayName = name || "Document.pdf";
+function PdfChip({ url, name }) {
+  if (!url) return null;
   return (
-    <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-red-500/10 text-red-700 dark:text-red-300 border border-red-500/20 text-xs">
-      <FileText className="h-3.5 w-3.5 shrink-0 text-red-600 dark:text-red-400" />
-      <a
-        href={url}
-        target="_blank"
-        rel="noreferrer"
-        className="font-medium hover:underline truncate max-w-[180px]"
-        title={displayName}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {displayName}
-      </a>
-      <a
-        href={url}
-        target="_blank"
-        rel="noreferrer"
-        download={displayName}
-        className="text-muted-foreground hover:text-foreground p-0.5"
-        title="Download PDF"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <Download className="h-3 w-3" />
-      </a>
-      {onRemove && (
-        <button type="button" onClick={onRemove} className="text-muted-foreground hover:text-destructive p-0.5">
-          <X className="h-3 w-3" />
-        </button>
-      )}
-    </div>
+    <a
+      href={url}
+      download={name || "Document.pdf"}
+      target="_blank"
+      rel="noreferrer"
+      onClick={(e) => e.stopPropagation()}
+      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-red-500/10 hover:bg-red-500/20 text-red-600 border border-red-200 dark:border-red-900/40 text-[11px] font-medium transition-colors"
+      title="Click to view/download PDF"
+    >
+      <FileText className="h-3.5 w-3.5 text-red-500" />
+      <span className="truncate max-w-[180px]">{name || "Document.pdf"}</span>
+      <Download className="h-3 w-3 ml-0.5 opacity-70" />
+    </a>
   );
 }
 
 function TaskCard({ task, onOpen }) {
-  const pdfCount = (task.attachments || []).length;
   return (
     <div
+      onClick={() => onOpen(task)}
       draggable
       onDragStart={(e) => e.dataTransfer.setData("text/task-id", task.id)}
-      onClick={() => onOpen(task)}
-      className="group p-3 rounded-lg border border-border bg-card hover:border-primary/40 hover-lift cursor-pointer space-y-2"
+      className="rounded-lg bg-card border border-border p-3.5 shadow-sm hover:border-primary/40 cursor-pointer space-y-2 group transition-all"
       data-testid={`task-card-${task.id}`}
     >
       <div className="flex items-start justify-between gap-2">
-        <div className="text-[13.5px] font-medium leading-snug text-foreground line-clamp-2">{task.title}</div>
+        <span className="text-[13.5px] font-medium text-foreground line-clamp-2 leading-snug group-hover:text-primary transition-colors">
+          {task.title}
+        </span>
         <StatusPill status={task.priority} />
       </div>
 
-      <div className="flex items-center gap-1.5 flex-wrap">
-        {task.module && <Badge variant="secondary" className="text-[10px]">{task.module}</Badge>}
-        {pdfCount > 0 && (
-          <Badge variant="outline" className="text-[10px] gap-1 bg-red-500/10 text-red-600 border-red-200 dark:border-red-900">
-            <FileText className="h-3 w-3" /> {pdfCount} PDF
+      {task.description && (
+        <p className="text-[12px] text-muted-foreground line-clamp-2">{task.description}</p>
+      )}
+
+      {/* Badges container */}
+      <div className="flex flex-wrap gap-1.5 items-center pt-0.5">
+        {task.attachments?.length > 0 && (
+          <Badge variant="outline" className="text-[10px] gap-1 bg-red-500/10 text-red-600 border-red-200 font-normal">
+            <FileText className="h-3 w-3" /> PDF ({task.attachments.length})
+          </Badge>
+        )}
+        {task.comments?.length > 0 && (
+          <Badge variant="outline" className="text-[10px] gap-1 font-normal">
+            <MessageSquare className="h-3 w-3" /> {task.comments.length}
           </Badge>
         )}
         {task.link && (
@@ -178,6 +173,8 @@ export default function TaskBoard() {
   const [detailOpen, setDetailOpen] = useState(false);
   const [activeTask, setActiveTask] = useState(null);
   const [form, setForm] = useState({ title: "", description: "", status: "todo", priority: "medium", module: "General", attachments: [], link: "" });
+  const [submitting, setSubmitting] = useState(false);
+  const [actionLoadingId, setActionLoadingId] = useState(null);
 
   const [comment, setComment] = useState("");
   const [commentPdf, setCommentPdf] = useState(null); // { url, name }
@@ -201,7 +198,21 @@ export default function TaskBoard() {
     }
   }
 
+  const [searchParams, setSearchParams] = useSearchParams();
+
   useEffect(() => { load(); }, []);
+
+  useEffect(() => {
+    if (searchParams.get("create") === "task" || searchParams.get("action") === "create-task") {
+      setForm({ title: "", description: "", status: "todo", priority: "medium", module: "General", attachments: [], link: "" });
+      setOpen(true);
+      setSearchParams(params => {
+        params.delete("create");
+        params.delete("action");
+        return params;
+      }, { replace: true });
+    }
+  }, [searchParams]);
 
   const filtered = useMemo(() => {
     if (!q) return tasks;
@@ -238,21 +249,31 @@ export default function TaskBoard() {
   }
 
   async function createTask() {
+    setSubmitting(true);
     try {
       await api.post("/tasks", form);
       toast.success("Task created");
       setOpen(false);
       setForm({ title: "", description: "", status: "todo", priority: "medium", module: "General", attachments: [], link: "" });
       load();
-    } catch (e) { toast.error(formatApiError(e)); }
+    } catch (e) {
+      toast.error(formatApiError(e));
+    } finally {
+      setSubmitting(false);
+    }
   }
 
   async function setStatus(id, status) {
+    setActionLoadingId(`status-${id}`);
     try {
       await api.patch(`/tasks/${id}/status`, { status });
       toast.success(`Task status updated to ${STATUS_LABEL[status] || status}`);
       load();
-    } catch (e) { toast.error(formatApiError(e)); }
+    } catch (e) {
+      toast.error(formatApiError(e));
+    } finally {
+      setActionLoadingId(null);
+    }
   }
 
   async function openDetail(t) {
@@ -270,6 +291,7 @@ export default function TaskBoard() {
 
   async function saveTaskLink() {
     if (!activeTask) return;
+    setActionLoadingId(`link-${activeTask.id}`);
     try {
       await api.patch(`/tasks/${activeTask.id}`, { link: linkInput.trim() });
       const { data } = await api.get(`/tasks/${activeTask.id}`);
@@ -277,11 +299,16 @@ export default function TaskBoard() {
       setEditingLink(false);
       load();
       toast.success("Reference link saved");
-    } catch (e) { toast.error(formatApiError(e)); }
+    } catch (e) {
+      toast.error(formatApiError(e));
+    } finally {
+      setActionLoadingId(null);
+    }
   }
 
   async function addComment() {
     if ((!comment.trim() && !commentPdf) || !activeTask) return;
+    setActionLoadingId(`comment-${activeTask.id}`);
     try {
       const payload = {
         body: comment.trim() || (commentPdf ? `Attached document: ${commentPdf.name}` : ""),
@@ -295,11 +322,16 @@ export default function TaskBoard() {
       setActiveTask(data);
       load();
       toast.success("Comment added");
-    } catch (e) { toast.error(formatApiError(e)); }
+    } catch (e) {
+      toast.error(formatApiError(e));
+    } finally {
+      setActionLoadingId(null);
+    }
   }
 
   async function addPdfToActiveTask(pdfObj) {
     if (!activeTask) return;
+    setActionLoadingId(`pdf-${activeTask.id}`);
     try {
       const currentAttachments = activeTask.attachments || [];
       const updatedAttachments = [...currentAttachments, pdfObj.url];
@@ -308,17 +340,26 @@ export default function TaskBoard() {
       setActiveTask(data);
       load();
       toast.success("PDF document attached to task");
-    } catch (e) { toast.error(formatApiError(e)); }
+    } catch (e) {
+      toast.error(formatApiError(e));
+    } finally {
+      setActionLoadingId(null);
+    }
   }
 
   async function deleteTask(id) {
     if (!confirm("Delete this task?")) return;
+    setActionLoadingId(`del-${id}`);
     try {
       await api.delete(`/tasks/${id}`);
       toast.success("Task deleted");
       setDetailOpen(false);
       load();
-    } catch (e) { toast.error(formatApiError(e)); }
+    } catch (e) {
+      toast.error(formatApiError(e));
+    } finally {
+      setActionLoadingId(null);
+    }
   }
 
   const userOpts = users.map(u => ({ value: u.id, label: u.name }));
@@ -380,7 +421,6 @@ export default function TaskBoard() {
               <div className="divide-y divide-border">
                 {filtered.map(t => (
                   <div key={t.id} onClick={() => openDetail(t)} className="flex items-center gap-4 px-4 py-3 hover:bg-muted/40 cursor-pointer">
-                    <StatusPill status={t.status} />
                     <div className="min-w-0 flex-1">
                       <div className="text-[13.5px] font-medium truncate flex items-center gap-2">
                         <span>{t.title}</span>
@@ -392,8 +432,17 @@ export default function TaskBoard() {
                       </div>
                       <div className="text-[11.5px] text-muted-foreground">{t.module} · {t.assignee_name || "Unassigned"}</div>
                     </div>
-                    <StatusPill status={t.priority} />
-                    {t.due_date && <div className="text-[12px] text-muted-foreground hidden sm:block">{new Date(t.due_date).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}</div>}
+                    <div className="w-[110px] flex justify-end shrink-0">
+                      <StatusPill status={t.status} />
+                    </div>
+                    <div className="w-[85px] flex justify-end shrink-0">
+                      <StatusPill status={t.priority} />
+                    </div>
+                    <div className="text-[12px] text-muted-foreground hidden sm:block w-[60px] text-right shrink-0">
+                      {t.due_date 
+                        ? new Date(t.due_date).toLocaleDateString("en-IN", { day: "numeric", month: "short" })
+                        : "---"}
+                    </div>
                   </div>
                 ))}
               </div>
@@ -522,8 +571,11 @@ export default function TaskBoard() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button onClick={createTask} data-testid="task-submit-btn">Create task</Button>
+            <Button variant="outline" onClick={() => setOpen(false)} disabled={submitting}>Cancel</Button>
+            <Button onClick={createTask} disabled={submitting} data-testid="task-submit-btn">
+              {submitting ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+              {submitting ? "Creating task..." : "Create task"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -545,7 +597,7 @@ export default function TaskBoard() {
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">Status</div>
-                    <Select value={activeTask.status} onValueChange={(v) => setStatus(activeTask.id, v).then(() => openDetail({ ...activeTask, status: v }))}>
+                    <Select value={activeTask.status} onValueChange={(v) => setStatus(activeTask.id, v).then(() => openDetail({ ...activeTask, status: v }))} disabled={actionLoadingId === `status-${activeTask.id}`}>
                       <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
                       <SelectContent>{STATUS_ORDER.map(s => <SelectItem key={s} value={s}>{STATUS_LABEL[s]}</SelectItem>)}</SelectContent>
                     </Select>
@@ -597,9 +649,13 @@ export default function TaskBoard() {
                         value={linkInput}
                         onChange={(e) => setLinkInput(e.target.value)}
                         onKeyDown={(e) => e.key === "Enter" && saveTaskLink()}
+                        disabled={actionLoadingId === `link-${activeTask.id}`}
                       />
-                      <Button size="sm" className="h-8 px-3 text-xs" onClick={saveTaskLink}>Save</Button>
-                      <Button size="sm" variant="outline" className="h-8 px-2 text-xs" onClick={() => setEditingLink(false)}>Cancel</Button>
+                      <Button size="sm" className="h-8 px-3 text-xs" onClick={saveTaskLink} disabled={actionLoadingId === `link-${activeTask.id}`}>
+                        {actionLoadingId === `link-${activeTask.id}` ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
+                        Save
+                      </Button>
+                      <Button size="sm" variant="outline" className="h-8 px-2 text-xs" onClick={() => setEditingLink(false)} disabled={actionLoadingId === `link-${activeTask.id}`}>Cancel</Button>
                     </div>
                   ) : activeTask.link ? (
                     <div className="flex items-center gap-2">
@@ -639,8 +695,10 @@ export default function TaskBoard() {
                       size="sm"
                       className="h-7 text-xs gap-1 text-primary"
                       onClick={() => detailFileInputRef.current?.click()}
+                      disabled={actionLoadingId === `pdf-${activeTask.id}`}
                     >
-                      <Plus className="h-3.5 w-3.5" /> Attach PDF
+                      {actionLoadingId === `pdf-${activeTask.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Plus className="h-3.5 w-3.5" />}
+                      Attach PDF
                     </Button>
                   </div>
 
@@ -705,6 +763,7 @@ export default function TaskBoard() {
                         value={comment}
                         onChange={(e) => setComment(e.target.value)}
                         onKeyDown={(e) => e.key === "Enter" && addComment()}
+                        disabled={actionLoadingId === `comment-${activeTask.id}`}
                       />
 
                       <input
@@ -722,18 +781,27 @@ export default function TaskBoard() {
                         className={`h-9 w-9 shrink-0 ${commentPdf ? "border-red-500 bg-red-50 text-red-600 dark:bg-red-950" : ""}`}
                         title="Attach PDF Document"
                         onClick={() => commentFileInputRef.current?.click()}
+                        disabled={actionLoadingId === `comment-${activeTask.id}`}
                       >
                         <Paperclip className="h-4 w-4" />
                       </Button>
 
-                      <Button size="sm" onClick={addComment} className="h-9 px-4">Post</Button>
+                      <Button size="sm" onClick={addComment} disabled={actionLoadingId === `comment-${activeTask.id}`} className="h-9 px-4">
+                        {actionLoadingId === `comment-${activeTask.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
+                        Post
+                      </Button>
                     </div>
                   </div>
                 </div>
               </div>
 
               <DialogFooter>
-                {canDelete && <Button variant="ghost" onClick={() => deleteTask(activeTask.id)} className="text-destructive"><Trash2 className="h-4 w-4 mr-1.5" /> Delete</Button>}
+                {canDelete && (
+                  <Button variant="ghost" onClick={() => deleteTask(activeTask.id)} disabled={actionLoadingId === `del-${activeTask.id}`} className="text-destructive">
+                    {actionLoadingId === `del-${activeTask.id}` ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : <Trash2 className="h-4 w-4 mr-1.5" />}
+                    Delete
+                  </Button>
+                )}
                 <Button onClick={() => setDetailOpen(false)}>Close</Button>
               </DialogFooter>
             </>

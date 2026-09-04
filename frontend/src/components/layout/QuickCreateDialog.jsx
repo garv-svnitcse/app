@@ -3,14 +3,14 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { Bike, Handshake, ClipboardList, Target, Users, Megaphone, CalendarDays, Archive } from "lucide-react";
 
 const OPTIONS = [
-  { label: "New Booking",     desc: "Reserve a vehicle for a customer.",  icon: Bike,          to: "/marketplace" },
-  { label: "New Vendor",      desc: "Onboard a fleet partner.",           icon: Handshake,     to: "/marketplace" },
-  { label: "New Task",        desc: "Assign work to your team.",          icon: ClipboardList, to: "/task-board" },
-  { label: "New Opportunity", desc: "Track a partnership or deal.",       icon: Target,        to: "/opportunity-hub" },
-  { label: "Invite Teammate", desc: "Add a user with a role.",            icon: Users,         to: "/employees" },
-  { label: "New Campaign",    desc: "Launch a marketing campaign.",       icon: Megaphone,     to: "/marketing" },
-  { label: "New Event",       desc: "Schedule on the company calendar.",  icon: CalendarDays,  to: "/calendar" },
-  { label: "Upload Document", desc: "Save to the Company Vault.",         icon: Archive,       to: "/company-vault" },
+  { label: "New Booking",     desc: "Reserve a vehicle for a customer.",  icon: Bike,          to: "/marketplace?tab=bookings&create=booking" },
+  { label: "New Vendor",      desc: "Onboard a fleet partner.",           icon: Handshake,     to: "/marketplace?tab=vendors&create=vendor" },
+  { label: "New Task",        desc: "Assign work to your team.",          icon: ClipboardList, to: "/task-board?create=task" },
+  { label: "New Opportunity", desc: "Track a partnership or deal.",       icon: Target,        to: "/opportunity-hub?create=opportunity" },
+  { label: "Invite Teammate", desc: "Add a user with a role.",            icon: Users,         to: "/employees?create=invite" },
+  { label: "New Campaign",    desc: "Launch a marketing campaign.",       icon: Megaphone,     to: "/marketing?create=campaign" },
+  { label: "New Event",       desc: "Schedule on the company calendar.",  icon: CalendarDays,  to: "/calendar?create=event" },
+  { label: "Upload Document", desc: "Save to the Company Vault.",         icon: Archive,       to: "/company-vault?create=document" },
 ];
 
 export function QuickCreateDialog({ open, onOpenChange }) {

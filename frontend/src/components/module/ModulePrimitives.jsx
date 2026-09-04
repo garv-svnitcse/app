@@ -84,6 +84,8 @@ const STATUS_CLASSES = {
   high: "bg-destructive/10 text-destructive",
   medium: "bg-warning/10 text-warning",
   low: "bg-info/10 text-info",
+  deactivated: "bg-destructive/10 text-destructive",
+  inactive: "bg-destructive/10 text-destructive",
 };
 
 export function StatusPill({ status, className }) {

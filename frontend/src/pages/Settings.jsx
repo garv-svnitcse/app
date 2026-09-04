@@ -11,6 +11,7 @@ import { useTheme } from "@/contexts/ThemeContext";
 import { usePermission } from "@/hooks/usePermission";
 import { api, formatApiError } from "@/lib/api";
 import { toast } from "sonner";
+import { Loader2 } from "lucide-react";
 
 export default function Settings() {
   const { user, refreshMe } = useAuth();
@@ -22,6 +23,9 @@ export default function Settings() {
   const [pwForm, setPwForm] = useState({ current_password: "", new_password: "" });
   const [company, setCompany] = useState(null);
   const [roles, setRoles] = useState([]);
+
+  const [savingProfile, setSavingProfile] = useState(false);
+  const [changingPw, setChangingPw] = useState(false);
 
   useEffect(() => {
     if (user) setProfile({
@@ -36,19 +40,29 @@ export default function Settings() {
   }, []);
 
   async function saveProfile() {
+    setSavingProfile(true);
     try {
       await api.patch("/users/me", { phone: profile.phone });
       await refreshMe();
       toast.success("Profile updated");
-    } catch (e) { toast.error(formatApiError(e)); }
+    } catch (e) {
+      toast.error(formatApiError(e));
+    } finally {
+      setSavingProfile(false);
+    }
   }
 
   async function changePassword() {
+    setChangingPw(true);
     try {
       await api.post("/users/me/password", pwForm);
       setPwForm({ current_password: "", new_password: "" });
       toast.success("Password updated");
-    } catch (e) { toast.error(formatApiError(e)); }
+    } catch (e) {
+      toast.error(formatApiError(e));
+    } finally {
+      setChangingPw(false);
+    }
   }
 
   return (
@@ -72,12 +86,15 @@ export default function Settings() {
             <CardHeader><CardTitle className="font-display">Your profile</CardTitle><CardDescription>Update your personal details</CardDescription></CardHeader>
             <CardContent className="space-y-4 max-w-lg">
               <div><Label>Name</Label><Input className="mt-1.5" value={profile.name} disabled data-testid="profile-name" /></div>
-              <div><Label>Phone</Label><Input className="mt-1.5" value={profile.phone} onChange={(e) => setProfile(s => ({ ...s, phone: e.target.value }))} placeholder="+91" data-testid="profile-phone" /></div>
+              <div><Label>Phone</Label><Input className="mt-1.5" value={profile.phone} onChange={(e) => setProfile(s => ({ ...s, phone: e.target.value }))} placeholder="+91" disabled={savingProfile} data-testid="profile-phone" /></div>
               <div className="grid grid-cols-2 gap-3">
                 <div><Label>Designation</Label><Input className="mt-1.5" value={profile.designation} disabled data-testid="profile-designation" /></div>
                 <div><Label>Department</Label><Input className="mt-1.5" value={profile.department} disabled data-testid="profile-department" /></div>
               </div>
-              <Button onClick={saveProfile} data-testid="save-profile-btn">Save changes</Button>
+              <Button onClick={saveProfile} disabled={savingProfile} data-testid="save-profile-btn">
+                {savingProfile ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                {savingProfile ? "Saving..." : "Save changes"}
+              </Button>
             </CardContent>
           </Card>
         </TabsContent>
@@ -121,9 +138,12 @@ export default function Settings() {
             <CardContent className="space-y-4 max-w-md">
               {canChangePassword ? (
                 <>
-                  <div><Label>Current password</Label><Input type="password" className="mt-1.5" value={pwForm.current_password} onChange={(e) => setPwForm(s => ({ ...s, current_password: e.target.value }))} data-testid="current-password-input" /></div>
-                  <div><Label>New password</Label><Input type="password" className="mt-1.5" value={pwForm.new_password} onChange={(e) => setPwForm(s => ({ ...s, new_password: e.target.value }))} data-testid="new-password-input" /></div>
-                  <Button onClick={changePassword} data-testid="change-password-btn">Update password</Button>
+                  <div><Label>Current password</Label><Input type="password" className="mt-1.5" value={pwForm.current_password} onChange={(e) => setPwForm(s => ({ ...s, current_password: e.target.value }))} disabled={changingPw} data-testid="current-password-input" /></div>
+                  <div><Label>New password</Label><Input type="password" className="mt-1.5" value={pwForm.new_password} onChange={(e) => setPwForm(s => ({ ...s, new_password: e.target.value }))} disabled={changingPw} data-testid="new-password-input" /></div>
+                  <Button onClick={changePassword} disabled={changingPw} data-testid="change-password-btn">
+                    {changingPw ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                    {changingPw ? "Updating..." : "Update password"}
+                  </Button>
                 </>
               ) : (
                 <div className="text-[13.5px] text-muted-foreground leading-relaxed" data-testid="password-managed-note">

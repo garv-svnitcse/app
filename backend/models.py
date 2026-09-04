@@ -32,6 +32,10 @@ class User(BaseDocument):
 
     department: Optional[str] = None
 
+    status: str = "active"
+
+    is_active: bool = True
+
     created_at: datetime = Field(default_factory=utc_now)
 
     updated_at: datetime = Field(default_factory=utc_now)
@@ -56,6 +60,10 @@ class UserPublic(BaseModel):
     designation: Optional[str] = None
 
     department: Optional[str] = None
+
+    status: Optional[str] = "active"
+
+    is_active: Optional[bool] = True
 
 
 class LoginRequest(BaseModel):

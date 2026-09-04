@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Eye, EyeOff, ArrowRight, ShieldCheck, Bike } from "lucide-react";
+import { Eye, EyeOff, ArrowRight, ShieldCheck, Bike, Loader2 } from "lucide-react";
 import { WavygoLogo } from "@/components/WavygoLogo";
 import { useAuth } from "@/contexts/AuthContext";
 import { AUTH } from "@/constants/testIds";
@@ -182,7 +182,7 @@ export default function Login() {
 
             <Button data-testid={AUTH.submitButton} type="submit" disabled={busy}
                     className="w-full h-11 bg-primary hover:bg-wavygo-600 text-primary-foreground font-medium">
-              {busy ? "Signing in…" : (<span className="inline-flex items-center gap-1.5">Sign in <ArrowRight className="h-4 w-4" /></span>)}
+              {busy ? <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Signing in…</span> : (<span className="inline-flex items-center gap-1.5">Sign in <ArrowRight className="h-4 w-4" /></span>)}
             </Button>
           </form>
 

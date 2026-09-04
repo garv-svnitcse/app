@@ -93,6 +93,9 @@ async def get_current_user(
     if not user_doc:
         raise HTTPException(status_code=401, detail="User not found")
 
+    if user_doc.get("status") == "deactivated" or user_doc.get("is_active") is False or user_doc.get("active") is False:
+        raise HTTPException(status_code=403, detail="Account is deactivated. Please contact your Founder or Admin.")
+
     return UserPublic(
         id=str(user_doc["_id"]),
         email=user_doc["email"],
@@ -103,6 +106,8 @@ async def get_current_user(
         phone=user_doc.get("phone"),
         designation=user_doc.get("designation"),
         department=user_doc.get("department"),
+        status=user_doc.get("status", "active"),
+        is_active=user_doc.get("is_active", True),
     )
 
 

@@ -65,12 +65,50 @@ async def invite_employee(payload: EmployeeInviteIn,
         raise HTTPException(403, "Cannot create another Founder")
     if payload.role == "Admin" and current.role != "Founder":
         raise HTTPException(403, "Only the Founder can create an Admin")
-    if await db.users.find_one({"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}}):
-        raise HTTPException(409, "Email is already registered as an employee")
-    
-    frontend_url = "https://app-eta-flax-97.vercel.app"
+    existing_user = await db.users.find_one({"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}})
+    if existing_user and existing_user.get("status") == "active" and (existing_user.get("is_active") is True or existing_user.get("active") is True):
+        raise HTTPException(409, "Email is already registered as an active employee")
+
+    frontend_url = os.environ.get("FRONTEND_URL", "https://app-eta-flax-97.vercel.app")
     token = secrets.token_urlsafe(32)
-    invite_url = f"https://app-eta-flax-97.vercel.app/accept-invite?token={token}"
+    invite_url = f"{frontend_url}/accept-invite?token={token}"
+
+    if existing_user:
+        await db.users.update_one(
+            {"_id": existing_user["_id"]},
+            {"$set": {
+                "name": name,
+                "role": payload.role,
+                "designation": payload.designation,
+                "department": payload.department,
+                "phone": payload.phone,
+                "status": "deactivated",
+                "is_active": False,
+                "active": False,
+                "invited_by": current.name,
+                "updated_at": utc_iso()
+            }}
+        )
+        user_id = str(existing_user["_id"])
+    else:
+        user_doc = {
+            "email": email,
+            "name": name,
+            "role": payload.role,
+            "designation": payload.designation,
+            "department": payload.department,
+            "phone": payload.phone,
+            "password_hash": "",
+            "status": "deactivated",
+            "is_active": False,
+            "active": False,
+            "online": False,
+            "invited_by": current.name,
+            "created_at": utc_iso(),
+            "updated_at": utc_iso(),
+        }
+        res_u = await db.users.insert_one(user_doc)
+        user_id = str(res_u.inserted_id)
 
     inv_doc = {
         "token": token,
@@ -82,6 +120,7 @@ async def invite_employee(payload: EmployeeInviteIn,
         "phone": payload.phone,
         "status": "pending",
         "invited_by": current.name,
+        "user_id": user_id,
         "created_at": utc_iso(),
     }
     await db.invitations.delete_many({"email": email})
@@ -104,7 +143,8 @@ async def invite_employee(payload: EmployeeInviteIn,
         **serialize(inv_doc),
         "token": token,
         "invite_url": invite_url,
-        "message": f"Invitation email sent to {email}"
+        "user_id": user_id,
+        "message": f"Invitation email sent to {email}. Employee added to database as deactivated pending invitation accept."
     }
 
 
@@ -169,6 +209,9 @@ async def accept_invite(payload: dict):
                 "designation": inv.get("designation"),
                 "department": inv.get("department"),
                 "phone": inv.get("phone"),
+                "status": "active",
+                "is_active": True,
+                "active": True,
                 "updated_at": utc_iso()
             }}
         )
@@ -181,6 +224,9 @@ async def accept_invite(payload: dict):
             "department": inv.get("department"),
             "phone": inv.get("phone"),
             "password_hash": hash_password(password),
+            "status": "active",
+            "is_active": True,
+            "active": True,
             "online": False,
             "created_at": utc_iso(),
             "updated_at": utc_iso(),
@@ -267,18 +313,31 @@ async def delete_invitation(invite_id: str, current: UserPublic = Depends(requir
     return {"ok": True, "message": f"Pending invitation for {email} deleted successfully"}
 
 
+async def _find_user(db, employee_id: str):
+    employee_id_str = str(employee_id).strip()
+    if ObjectId.is_valid(employee_id_str):
+        user = await db.users.find_one({"_id": ObjectId(employee_id_str)})
+        if user:
+            return user
+    user = await db.users.find_one({"_id": employee_id_str})
+    if user:
+        return user
+    user = await db.users.find_one({"email": {"$regex": f"^{re.escape(employee_id_str)}$", "$options": "i"}})
+    return user
+
+
 @router.post("/{employee_id}/reset-password")
 async def reset_employee_password(employee_id: str, payload: dict | None = None,
                                   current: UserPublic = Depends(require_roles("Founder", "Admin"))):
     db = get_db()
-    target = await db.users.find_one({"_id": oid(employee_id)})
+    target = await _find_user(db, employee_id)
     if not target:
-        raise HTTPException(404, "Not found")
+        raise HTTPException(404, "Employee not found")
     if target.get("role") == "Founder":
         raise HTTPException(403, "Cannot reset the Founder password from here")
     new_password = (payload or {}).get("new_password") or _gen_temp_password()
     await db.users.update_one(
-        {"_id": oid(employee_id)},
+        {"_id": target["_id"]},
         {"$set": {"password_hash": hash_password(new_password), "updated_at": utc_iso()}},
     )
     await log_activity(db, current, "Reset password", "Employees", target=target["name"])
@@ -286,6 +345,49 @@ async def reset_employee_password(employee_id: str, payload: dict | None = None,
                  f"{current.name} reset your password. Please sign in with the new temporary password and update it if allowed.",
                  kind="warning", link="/settings")
     return {"ok": True, "temp_password": new_password}
+
+
+@router.patch("/{employee_id}/status")
+async def toggle_employee_status(employee_id: str, payload: dict | None = None,
+                                 current: UserPublic = Depends(require_roles("Founder", "Admin"))):
+    db = get_db()
+    target = await _find_user(db, employee_id)
+    if not target:
+        raise HTTPException(404, "Employee not found")
+    if target.get("role") == "Founder":
+        raise HTTPException(403, "Cannot deactivate the Founder account")
+    if target.get("role") == "Admin" and current.role != "Founder":
+        raise HTTPException(403, "Only the Founder can deactivate an Admin")
+    
+    current_status = target.get("status", "active")
+    req_status = (payload or {}).get("status")
+    if req_status in ("active", "deactivated"):
+        new_status = req_status
+    else:
+        new_status = "deactivated" if current_status == "active" else "active"
+    
+    is_act = (new_status == "active")
+    await db.users.update_one(
+        {"_id": target["_id"]},
+        {"$set": {
+            "status": new_status,
+            "is_active": is_act,
+            "active": is_act,
+            "updated_at": utc_iso()
+        }}
+    )
+    
+    if not is_act:
+        await db.sessions.delete_many({"user_id": str(target["_id"])})
+    
+    action_verb = "Reactivated" if is_act else "Deactivated"
+    await log_activity(db, current, f"{action_verb} employee account", "Employees", target=target["name"])
+    return {
+        "ok": True,
+        "status": new_status,
+        "is_active": is_act,
+        "message": f"Employee {target['name']} is now {new_status}."
+    }
 
 
 @router.patch("/{employee_id}")
@@ -297,19 +399,46 @@ async def update_employee(employee_id: str, payload: dict,
         raise HTTPException(403, "Cannot assign the Founder role")
     if new_role == "Admin" and current.role != "Founder":
         raise HTTPException(403, "Only the Founder can assign the Admin role")
-    target = await db.users.find_one({"_id": oid(employee_id)})
+    target = await _find_user(db, employee_id)
     if not target:
-        raise HTTPException(404, "Not found")
+        raise HTTPException(404, "Employee not found")
     if current.role == "Manager" and target.get("department") != current.department:
         raise HTTPException(403, "Managers can only edit teammates in their department")
     payload.pop("id", None); payload.pop("_id", None); payload.pop("password_hash", None); payload.pop("email", None)
     payload["updated_at"] = utc_iso()
-    res = await db.users.update_one({"_id": oid(employee_id)}, {"$set": payload})
+    res = await db.users.update_one({"_id": target["_id"]}, {"$set": payload})
     if res.matched_count == 0:
-        raise HTTPException(404, "Not found")
-    doc = await db.users.find_one({"_id": oid(employee_id)}, {"password_hash": 0})
+        raise HTTPException(404, "Employee not found")
+    doc = await db.users.find_one({"_id": target["_id"]}, {"password_hash": 0})
     await log_activity(db, current, "Updated employee", "Employees", target=doc["name"])
     return serialize(doc)
+
+
+@router.delete("/{employee_id}")
+async def delete_employee(employee_id: str,
+                          current: UserPublic = Depends(require_roles("Founder", "Admin"))):
+    db = get_db()
+    target = await _find_user(db, employee_id)
+    if not target:
+        raise HTTPException(404, "Employee not found")
+    if target.get("role") == "Founder":
+        raise HTTPException(403, "Cannot remove the Founder account")
+    if target.get("role") == "Admin" and current.role != "Founder":
+        raise HTTPException(403, "Only the Founder can remove an Admin")
+    
+    email = target.get("email")
+    # Remove ONLY the user account credentials from db.users.
+    # Preserve all assigned tasks, submitted data, attendance, leave requests, activity logs!
+    await db.users.delete_one({"_id": target["_id"]})
+    await db.sessions.delete_many({"user_id": str(target["_id"])})
+    if email:
+        await db.invitations.delete_many({"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}})
+    
+    await log_activity(db, current, "Removed employee account", "Employees", target=target["name"])
+    return {
+        "ok": True,
+        "message": f"Employee account for {target['name']} removed. Assigned tasks and submitted data remain intact."
+    }
 
 
 # -------- Departments --------
@@ -424,8 +553,18 @@ async def create_leave(payload: LeaveIn, current: UserPublic = Depends(get_curre
     doc["_id"] = res.inserted_id
     emp = await db.users.find_one({"_id": oid(doc["employee_id"])}, {"name": 1})
     await log_activity(db, current, "Leave requested", "Employees", target=f"{emp['name'] if emp else '—'} · {doc['from_date']} → {doc['to_date']}")
-    await notify(db, None, "Leave request", f"{emp['name'] if emp else 'Employee'} requested {doc['kind']} leave from {doc['from_date']} to {doc['to_date']}.",
-                 kind="warning", link="/employees")
+
+    approvers = await db.users.find(
+        {"role": {"$in": ["Founder", "Admin", "Manager"]}},
+        {"_id": 1},
+    ).to_list(50)
+
+    for a in approvers:
+        await notify(
+            db, str(a["_id"]), "Leave request",
+            f"{emp['name'] if emp else 'Employee'} requested {doc['kind']} leave from {doc['from_date']} to {doc['to_date']}.",
+            kind="warning", link="/employees",
+        )
     return serialize(doc)
 
 
