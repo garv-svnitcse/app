@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Users, Plus, UserPlus, Building2, CalendarDays, Award, KeyRound, Mail, Copy, Check, Trash2, Pencil, Power, UserMinus, CheckCircle2, Loader2 } from "lucide-react";
+import { Users, Plus, UserPlus, Building2, CalendarDays, Award, KeyRound, Mail, Copy, Check, Trash2, Pencil, Power, UserMinus, CheckCircle2, Loader2, Eye, EyeOff, Sparkles, Send, ShieldCheck } from "lucide-react";
 import { api, formatApiError } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermission } from "@/hooks/usePermission";
@@ -40,6 +40,11 @@ function Directory() {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({ email: "", name: "", role: "Employee", designation: "", department: "", phone: "" });
   const [resetInfo, setResetInfo] = useState(null);
+  const [resetTargetUser, setResetTargetUser] = useState(null);
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [passwordCopied, setPasswordCopied] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
   const [editForm, setEditForm] = useState({ name: "", role: "Employee", designation: "", department: "", phone: "" });
 
@@ -137,18 +142,62 @@ function Directory() {
     }
   }
 
-  async function resetPassword(u) {
-    const key = `reset-${u.id}`;
+  function openResetModal(u) {
+    setResetTargetUser(u);
+    setNewPassword("");
+    setConfirmPassword("");
+    setShowPassword(false);
+    setPasswordCopied(false);
+  }
+
+  function generateRandomPassword() {
+    const chars = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%&*";
+    let pwd = "Wg";
+    for (let i = 0; i < 10; i++) {
+      pwd += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    setNewPassword(pwd);
+    setConfirmPassword(pwd);
+    setShowPassword(true);
+  }
+
+  async function handleResetSubmit(e) {
+    if (e) e.preventDefault();
+    if (!resetTargetUser) return;
+    const trimmed = newPassword.trim();
+    if (!trimmed || trimmed.length < 6) {
+      toast.error("Password must be at least 6 characters long");
+      return;
+    }
+    if (trimmed !== confirmPassword.trim()) {
+      toast.error("Passwords do not match");
+      return;
+    }
+
+    const key = `reset-${resetTargetUser.id}`;
     setActionLoadingKey(key);
     try {
-      const { data } = await api.post(`/employees/${u.id}/reset-password`);
-      setResetInfo({ email: u.email, password: data.temp_password });
-      toast.success("Password reset");
-    } catch (e) {
-      toast.error(formatApiError(e));
+      const { data } = await api.post(`/employees/${resetTargetUser.id}/reset-password`, {
+        new_password: trimmed,
+      });
+      toast.success(data.message || `Password updated! Email dispatched to ${resetTargetUser.email} via Brevo.`);
+      setResetInfo({
+        email: resetTargetUser.email,
+        name: resetTargetUser.name,
+        password: trimmed,
+      });
+      setResetTargetUser(null);
+      setNewPassword("");
+      setConfirmPassword("");
+    } catch (err) {
+      toast.error(formatApiError(err));
     } finally {
       setActionLoadingKey(null);
     }
+  }
+
+  async function resetPassword(u) {
+    openResetModal(u);
   }
 
   async function toggleEmployeeStatus(u) {
@@ -452,17 +501,165 @@ function Directory() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={!!resetInfo} onOpenChange={(v) => !v && setResetInfo(null)}>
-        <DialogContent data-testid="reset-password-dialog">
+      {/* Reset Password Form Modal */}
+      <Dialog open={!!resetTargetUser} onOpenChange={(v) => !v && setResetTargetUser(null)}>
+        <DialogContent className="sm:max-w-md" data-testid="reset-password-form-dialog">
           <DialogHeader>
-            <DialogTitle className="font-display">Temporary Password Generated</DialogTitle>
-            <DialogDescription>Share this temporary password with {resetInfo?.email}. They should sign in and update their password if permitted.</DialogDescription>
+            <div className="flex items-center gap-2 mb-1">
+              <div className="h-9 w-9 rounded-lg bg-amber-500/10 text-amber-500 flex items-center justify-center">
+                <KeyRound className="h-5 w-5" />
+              </div>
+              <div>
+                <DialogTitle className="text-lg font-display">Reset Employee Password</DialogTitle>
+                <DialogDescription className="text-xs">
+                  Set a new password for <span className="font-semibold text-foreground">{resetTargetUser?.name}</span>
+                </DialogDescription>
+              </div>
+            </div>
           </DialogHeader>
-          <div className="p-4 rounded-lg bg-slate-900 border border-slate-800 text-center font-mono text-lg tracking-wider font-bold text-amber-400 select-all my-2">
-            {resetInfo?.password}
+
+          {/* Brevo Notification Info Callout */}
+          <div className="rounded-lg bg-blue-50 dark:bg-blue-950/40 border border-blue-200 dark:border-blue-900/60 p-3 text-xs text-blue-900 dark:text-blue-200 flex items-start gap-2.5">
+            <Mail className="h-4 w-4 text-blue-600 dark:text-blue-400 mt-0.5 shrink-0" />
+            <div className="space-y-0.5 leading-relaxed">
+              <span className="font-semibold">Brevo Email Notification:</span>
+              <p className="text-muted-foreground text-[11px] leading-normal">
+                When submitted, an email will be automatically sent via Brevo to{" "}
+                <span className="font-mono font-medium text-foreground">{resetTargetUser?.email}</span> with their updated login credentials attached.
+              </p>
+            </div>
           </div>
+
+          <form onSubmit={handleResetSubmit} className="space-y-4 pt-1">
+            <div className="space-y-1.5">
+              <div className="flex items-center justify-between">
+                <Label className="text-xs font-medium">New Password</Label>
+                <button
+                  type="button"
+                  onClick={generateRandomPassword}
+                  className="text-[11px] font-medium text-primary hover:underline flex items-center gap-1 cursor-pointer transition-colors"
+                >
+                  <Sparkles className="h-3 w-3" /> Auto-generate strong
+                </button>
+              </div>
+              <div className="relative">
+                <Input
+                  type={showPassword ? "text" : "password"}
+                  placeholder="Enter new password (min 6 characters)"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  className="pr-10 text-sm font-mono tracking-wide"
+                  autoFocus
+                  data-testid="reset-new-password-input"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors p-1"
+                  tabIndex={-1}
+                >
+                  {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label className="text-xs font-medium">Confirm New Password</Label>
+              <div className="relative">
+                <Input
+                  type={showPassword ? "text" : "password"}
+                  placeholder="Re-enter new password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  className={`pr-10 text-sm font-mono tracking-wide ${
+                    confirmPassword && confirmPassword !== newPassword ? "border-rose-500 focus-visible:ring-rose-500" : ""
+                  }`}
+                  data-testid="reset-confirm-password-input"
+                />
+              </div>
+              {confirmPassword && confirmPassword !== newPassword && (
+                <p className="text-[11px] text-rose-500 font-medium">Passwords do not match</p>
+              )}
+            </div>
+
+            <DialogFooter className="gap-2 sm:gap-0 pt-2">
+              <Button type="button" variant="outline" onClick={() => setResetTargetUser(null)}>
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                disabled={actionLoadingKey === `reset-${resetTargetUser?.id}` || !newPassword || newPassword.length < 6 || newPassword !== confirmPassword}
+                data-testid="reset-submit-btn"
+              >
+                {actionLoadingKey === `reset-${resetTargetUser?.id}` ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                    Updating & Sending Brevo Email...
+                  </>
+                ) : (
+                  <>
+                    <Send className="h-3.5 w-3.5 mr-1.5" />
+                    Update & Send Email
+                  </>
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Password Reset Confirmation Dialog */}
+      <Dialog open={!!resetInfo} onOpenChange={(v) => !v && setResetInfo(null)}>
+        <DialogContent data-testid="reset-password-dialog" className="sm:max-w-md">
+          <DialogHeader>
+            <div className="flex items-center gap-2 mb-1">
+              <div className="h-9 w-9 rounded-lg bg-emerald-500/10 text-emerald-500 flex items-center justify-center">
+                <ShieldCheck className="h-5 w-5" />
+              </div>
+              <div>
+                <DialogTitle className="text-lg font-display">Password Updated Successfully</DialogTitle>
+                <DialogDescription className="text-xs">
+                  Email dispatched to <span className="font-semibold text-foreground">{resetInfo?.email}</span> via Brevo
+                </DialogDescription>
+              </div>
+            </div>
+          </DialogHeader>
+
+          <div className="space-y-3 my-2">
+            <div className="flex items-center gap-2 text-xs bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-900/60 text-emerald-800 dark:text-emerald-300 p-2.5 rounded-lg">
+              <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" />
+              <span>
+                The employee's password has been updated and an email with the new credentials was sent to <strong>{resetInfo?.email}</strong>.
+              </span>
+            </div>
+
+            <div className="p-3.5 rounded-lg bg-slate-900 border border-slate-800 space-y-2">
+              <div className="flex items-center justify-between text-xs text-slate-400">
+                <span>Updated Password</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    navigator.clipboard.writeText(resetInfo?.password || "");
+                    setPasswordCopied(true);
+                    toast.success("Password copied to clipboard");
+                    setTimeout(() => setPasswordCopied(false), 2000);
+                  }}
+                  className="flex items-center gap-1 text-slate-300 hover:text-white transition-colors"
+                >
+                  {passwordCopied ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                  {passwordCopied ? "Copied" : "Copy"}
+                </button>
+              </div>
+              <div className="font-mono text-base font-bold text-amber-400 select-all tracking-wider break-all">
+                {resetInfo?.password}
+              </div>
+            </div>
+          </div>
+
           <DialogFooter>
-            <Button onClick={() => setResetInfo(null)}>Done</Button>
+            <Button onClick={() => setResetInfo(null)} className="w-full sm:w-auto">
+              Done
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
