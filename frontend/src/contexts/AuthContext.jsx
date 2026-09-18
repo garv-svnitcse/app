@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState, useCallback } from "rea
 import { api, tokens, formatApiError } from "@/lib/api";
 
 const AuthContext = createContext(null);
+const LAST_ACTIVITY_KEY = "wavygo_last_activity";
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(null);       // null while checking, false = not logged in
@@ -26,6 +27,7 @@ export function AuthProvider({ children }) {
     try {
       const { data } = await api.post("/auth/login", { email, password, remember });
       tokens.set(data.access_token, data.refresh_token);
+      localStorage.setItem(LAST_ACTIVITY_KEY, Date.now().toString());
       setUser(data.user);
       return { ok: true };
     } catch (e) {
@@ -36,6 +38,7 @@ export function AuthProvider({ children }) {
   async function logout() {
     try { await api.post("/auth/logout"); } catch { /* ignore */ }
     tokens.clear();
+    localStorage.removeItem(LAST_ACTIVITY_KEY);
     setUser(false);
   }
 
