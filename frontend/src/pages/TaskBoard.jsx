@@ -256,22 +256,84 @@ export default function TaskBoard() {
       toast.error(formatApiError(e));
     }
   }
-
   const [searchParams, setSearchParams] = useSearchParams();
 
-  useEffect(() => { load(); }, []);
+useEffect(() => {
+  load();
+}, []);
 
-  useEffect(() => {
-    if (searchParams.get("create") === "task" || searchParams.get("action") === "create-task") {
-      setForm({ title: "", description: "", status: "todo", priority: "medium", module: "General", attachments: [], link: "" });
-      setOpen(true);
-      setSearchParams(params => {
+useEffect(() => {
+  if (
+    searchParams.get("create") === "task" ||
+    searchParams.get("action") === "create-task"
+  ) {
+    setForm({
+      title: "",
+      description: "",
+      status: "todo",
+      priority: "medium",
+      module: "General",
+      attachments: [],
+      link: "",
+    });
+
+    setOpen(true);
+
+    setSearchParams(
+      (params) => {
         params.delete("create");
         params.delete("action");
         return params;
-      }, { replace: true });
+      },
+      { replace: true }
+    );
+  }
+}, [searchParams, setSearchParams]);
+
+/*
+ * Open a task directly when coming from a notification.
+ *
+ * Example notification link:
+ * /task-board?task_id=68c123abc...
+ *
+ * This uses the SAME Task Details dialog that is already
+ * used when clicking a task card.
+ */
+useEffect(() => {
+  
+  const taskId = searchParams.get("task_id");
+
+  if (!taskId) return;
+
+  async function openNotificationTask() {
+    try {
+      // Fetch the exact task from the backend
+      const { data } = await api.get(`/tasks/${taskId}`);
+
+      // Open the existing Task Details dialog
+      setActiveTask(data);
+      setCommentPdf(null);
+      setEditingLink(false);
+      setLinkInput(data.link || "");
+      setDetailOpen(true);
+
+      // Remove task_id from the URL after opening.
+      // This prevents the dialog from reopening unnecessarily.
+      setSearchParams(
+        (params) => {
+          params.delete("task_id");
+          return params;
+        },
+        { replace: true }
+      );
+    } catch (error) {
+      console.error("Failed to open notification task:", error);
+      toast.error("Could not open this task.");
     }
-  }, [searchParams]);
+  }
+
+  openNotificationTask();
+}, [searchParams, setSearchParams]);
 
   const [sortBy, setSortBy] = useState("current-first");
   const [statusFilter, setStatusFilter] = useState("all");
