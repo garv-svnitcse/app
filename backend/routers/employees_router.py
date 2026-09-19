@@ -12,7 +12,12 @@ from models import UserPublic
 from models_part2 import DepartmentIn, EmployeeInviteIn, AttendanceIn, LeaveIn, PerformanceIn
 from hub_utils import serialize, serialize_many, oid, utc_iso, log_activity, notify
 from email_utils import send_invitation_email, send_password_reset_email
-from dept_groups import sync_employee_department_group, add_member_to_department_channel, get_or_create_department_channel
+from dept_groups import (
+    sync_employee_department_group,
+    add_member_to_department_channel,
+    canonical_department_name,
+    ensure_department_groups,
+)
 
 router = APIRouter(prefix="/employees", tags=["employees"])
 
@@ -66,6 +71,11 @@ async def invite_employee(payload: EmployeeInviteIn,
         raise HTTPException(403, "Cannot create another Founder")
     if payload.role == "Admin" and current.role != "Founder":
         raise HTTPException(403, "Only the Founder can create an Admin")
+    if payload.department:
+        canonical_department = await canonical_department_name(db, payload.department)
+        if not canonical_department:
+            raise HTTPException(400, "Department must match an existing department")
+        payload.department = canonical_department
     existing_user = await db.users.find_one({"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}})
     if existing_user and existing_user.get("status") == "active" and (existing_user.get("is_active") is True or existing_user.get("active") is True):
         raise HTTPException(409, "Email is already registered as an active employee")
@@ -440,6 +450,11 @@ async def update_employee(employee_id: str, payload: dict,
     if current.role == "Manager" and target.get("department") != current.department:
         raise HTTPException(403, "Managers can only edit teammates in their department")
     payload.pop("id", None); payload.pop("_id", None); payload.pop("password_hash", None); payload.pop("email", None)
+    if payload.get("department"):
+        canonical_department = await canonical_department_name(db, payload["department"])
+        if not canonical_department:
+            raise HTTPException(400, "Department must match an existing department")
+        payload["department"] = canonical_department
     payload["updated_at"] = utc_iso()
     res = await db.users.update_one({"_id": target["_id"]}, {"$set": payload})
     if res.matched_count == 0:
@@ -483,6 +498,7 @@ async def delete_employee(employee_id: str,
 @router.get("/departments/list")
 async def list_departments(current: UserPublic = Depends(get_current_user)):
     db = get_db()
+    await ensure_department_groups(db)
     docs = await db.departments.find().sort("name", 1).to_list(200)
     out = []
     for d in docs:
@@ -505,7 +521,7 @@ async def create_department(payload: DepartmentIn,
     doc["created_at"] = utc_iso()
     res = await db.departments.insert_one(doc)
     doc["_id"] = res.inserted_id
-    await get_or_create_department_channel(db, doc["name"])
+    await ensure_department_groups(db)
     await log_activity(db, current, "Created department", "Employees", target=doc["name"])
     return serialize(doc)
 

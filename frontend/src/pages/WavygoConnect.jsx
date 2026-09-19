@@ -45,6 +45,7 @@ export default function WavygoConnect() {
   const [users, setUsers] = useState([]);
   const [activeId, setActiveId] = useState(null);
   const [messages, setMessages] = useState([]);
+  const [groupMembers, setGroupMembers] = useState([]);
   const [text, setText] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [dmOpen, setDmOpen] = useState(false);
@@ -54,10 +55,17 @@ export default function WavygoConnect() {
   const scrollRef = useRef(null);
 
   async function loadChannels(selectId = null) {
-    const { data } = await api.get("/connect/channels");
+    const [{ data }, departmentGroup] = await Promise.all([
+      api.get("/connect/channels"),
+      api.get("/connect/department-group").catch(() => null),
+    ]);
     setChannels(data);
     if (selectId) setActiveId(selectId);
-    else if (!activeId && data.length) setActiveId(data[0].id);
+    else if (!activeId && data.length) {
+      // Open the employee's only department group first. Other Connect
+      // channels and DMs remain available through the existing UI.
+      setActiveId(departmentGroup?.data?.channel?.id || data[0].id);
+    }
   }
 
   async function loadUsers() {
@@ -96,6 +104,17 @@ export default function WavygoConnect() {
       return () => clearInterval(t);
     }
   }, [activeId]);
+
+  useEffect(() => {
+    const activeChannel = channels.find(c => c.id === activeId);
+    if (!activeChannel?.department) {
+      setGroupMembers([]);
+      return;
+    }
+    api.get(`/connect/channels/${activeId}/members`)
+      .then(({ data }) => setGroupMembers(data || []))
+      .catch(() => setGroupMembers([]));
+  }, [activeId, channels]);
 
   useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [messages]);
 
@@ -253,7 +272,7 @@ export default function WavygoConnect() {
               (grouped[kind] || []).length > 0 && (
                 <div key={kind} className="mb-4">
                   <div className="text-[10.5px] uppercase tracking-[0.14em] text-muted-foreground px-2 mb-1.5">
-                    {kind === "dm" ? "Direct Messages" : kind === "announcement" ? "Announcements" : kind === "group" ? "Groups" : "Channels"}
+                    {kind === "dm" ? "Direct Messages" : kind === "announcement" ? "Announcements" : kind === "group" ? "My Department" : "Channels"}
                   </div>
                   <ul className="space-y-0.5">
                     {(grouped[kind] || []).map(c => {
@@ -314,7 +333,12 @@ export default function WavygoConnect() {
                         {active.kind === "group" && <Badge variant="secondary" className="text-[10px]"><Lock className="h-2.5 w-2.5 mr-1" />Private</Badge>}
                         {active.kind === "announcement" && <Badge className="bg-info/10 text-info hover:bg-info/10 text-[10px]">Announcement</Badge>}
                       </div>
-                      {active.description && <div className="text-[11.5px] text-muted-foreground">{active.description}</div>}
+                       {active.description && <div className="text-[11.5px] text-muted-foreground">{active.description}</div>}
+                       {active.kind === "group" && active.department && (
+                         <div className="text-[11.5px] text-muted-foreground mt-1">
+                           {groupMembers.length} member{groupMembers.length === 1 ? "" : "s"} · {groupMembers.map(member => member.name).join(", ") || "No active employees"}
+                         </div>
+                       )}
                     </div>
                   </>
                 )}
@@ -357,7 +381,7 @@ export default function WavygoConnect() {
       {/* New channel dialog */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent>
-          <DialogHeader><DialogTitle className="font-display">New channel</DialogTitle><DialogDescription>Channels are visible to everyone. Groups are private.</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle className="font-display">New channel</DialogTitle><DialogDescription>Channels are visible to everyone. Department groups are created automatically.</DialogDescription></DialogHeader>
           <div className="space-y-3">
             <div><Label>Name</Label><Input value={form.name} onChange={(e) => setForm(s => ({ ...s, name: e.target.value }))} placeholder="e.g. patna-ops" /></div>
             <div>
@@ -366,7 +390,6 @@ export default function WavygoConnect() {
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="channel">Channel — public</SelectItem>
-                  <SelectItem value="group">Group — private</SelectItem>
                   {canCreateAnnouncement && <SelectItem value="announcement">Announcement — broadcast</SelectItem>}
                 </SelectContent>
               </Select>

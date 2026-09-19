@@ -6,8 +6,15 @@ from auth_utils import get_current_user, require_roles
 from models import UserPublic
 from models_part2 import ChannelIn, MessageIn
 from hub_utils import serialize, serialize_many, oid, utc_iso, log_activity, notify
+from dept_groups import ensure_department_groups, get_or_create_department_channel, is_department_group_member
 
 router = APIRouter(prefix="/connect", tags=["connect"])
+
+MEMBER_FIELDS = {
+    "name": 1, "email": 1, "role": 1, "photo": 1, "online": 1,
+    "phone": 1, "designation": 1, "department": 1, "status": 1,
+    "is_active": 1,
+}
 
 
 async def _channel_meta(db, doc, current_id: str):
@@ -30,24 +37,58 @@ async def _channel_meta(db, doc, current_id: str):
     return doc
 
 
+async def _can_access_channel(db, channel: dict, current: UserPublic) -> bool:
+    """Authorize the channel types while keeping department groups data-derived."""
+    if channel.get("kind") != "group":
+        return channel.get("kind") not in ("dm",) or current.id in channel.get("members", [])
+    if channel.get("department_group"):
+        # Department groups deliberately do not use the cached members array
+        # for authorization.  A department transfer takes effect immediately.
+        return is_department_group_member(channel, current.department)
+    # Preserve access semantics for any pre-existing non-department groups.
+    return current.id in channel.get("members", [])
+
+
 @router.get("/channels")
 async def list_channels(kind: str | None = None, current: UserPublic = Depends(get_current_user)):
     db = get_db()
-    q = {}
+    await ensure_department_groups(db)
+    # Fetch department groups so their access can be evaluated from the
+    # current employee department instead of a copied membership list.
+    q = {"$or": [{"kind": {"$in": ["channel", "announcement", "group"]}}, {"members": current.id}]}
     if kind:
         q["kind"] = kind
-    # visible: public channels + those the user belongs to
-    q["$or"] = [{"kind": {"$in": ["channel", "announcement"]}}, {"members": current.id}]
     docs = await db.channels.find(q).sort("last_message_at", -1).to_list(200)
+    docs = [doc for doc in docs if await _can_access_channel(db, doc, current)]
     for d in docs:
         await _channel_meta(db, d, current.id)
     return serialize_many(docs)
+
+
+@router.get("/department-group")
+async def my_department_group(current: UserPublic = Depends(get_current_user)):
+    """Return the caller's one department group and its live employee roster."""
+    if not (current.department or "").strip():
+        raise HTTPException(404, "No department group is available because your employee record has no department")
+    db = get_db()
+    await ensure_department_groups(db)
+    channel = await get_or_create_department_channel(db, current.department)
+    if not channel or not is_department_group_member(channel, current.department):
+        raise HTTPException(404, "No department group is configured for your department")
+    await _channel_meta(db, channel, current.id)
+    members = await db.users.find(
+        {"department": channel["department"], "status": {"$ne": "deactivated"}, "is_active": {"$ne": False}},
+        MEMBER_FIELDS,
+    ).sort("name", 1).to_list(500)
+    return {"channel": serialize(channel), "members": serialize_many(members)}
 
 
 @router.post("/channels", status_code=201)
 async def create_channel(payload: ChannelIn,
                          current: UserPublic = Depends(require_roles("Founder", "Admin", "Manager"))):
     db = get_db()
+    if payload.kind == "group":
+        raise HTTPException(403, "Department groups are created automatically from the employee department list")
     if payload.kind == "announcement" and current.role not in ("Founder", "Admin"):
         raise HTTPException(403, "Only Founder or Admin can create announcement channels")
     doc = payload.model_dump()
@@ -179,7 +220,7 @@ async def list_messages(channel_id: str, limit: int = Query(100, ge=1, le=500),
     ch = await db.channels.find_one({"_id": oid(channel_id)})
     if not ch:
         raise HTTPException(404, "Channel not found")
-    if ch["kind"] in ("dm", "group") and current.id not in ch.get("members", []):
+    if not await _can_access_channel(db, ch, current):
         raise HTTPException(403, "Not a member")
     docs = await db.messages.find({"channel_id": channel_id}).sort("created_at", -1).to_list(limit)
     docs.reverse()
@@ -194,7 +235,7 @@ async def send_message(channel_id: str, payload: MessageIn, current: UserPublic 
         raise HTTPException(404, "Channel not found")
     if ch["kind"] == "announcement" and current.role not in ("Founder", "Admin"):
         raise HTTPException(403, "Only Founder or Admin can post in announcement channels")
-    if ch["kind"] in ("dm", "group") and current.id not in ch.get("members", []):
+    if not await _can_access_channel(db, ch, current):
         raise HTTPException(403, "Not a member")
     doc = {
         "channel_id": channel_id,
@@ -215,12 +256,39 @@ async def send_message(channel_id: str, payload: MessageIn, current: UserPublic 
     return serialize(doc)
 
 
+@router.get("/channels/{channel_id}/members")
+async def list_channel_members(channel_id: str, current: UserPublic = Depends(get_current_user)):
+    db = get_db()
+    channel = await db.channels.find_one({"_id": oid(channel_id)})
+    if not channel:
+        raise HTTPException(404, "Channel not found")
+    if not await _can_access_channel(db, channel, current):
+        raise HTTPException(403, "Not a member")
+    if channel.get("kind") == "group" and channel.get("department_group"):
+        users = await db.users.find(
+            {"department": channel["department"], "status": {"$ne": "deactivated"}, "is_active": {"$ne": False}},
+            MEMBER_FIELDS,
+        ).sort("name", 1).to_list(500)
+        return serialize_many(users)
+    users = []
+    for user_id in channel.get("members", []):
+        try:
+            user = await db.users.find_one({"_id": ObjectId(user_id)}, MEMBER_FIELDS)
+        except Exception:
+            user = None
+        if user:
+            users.append(user)
+    return serialize_many(users)
+
+
 @router.post("/channels/{channel_id}/join")
 async def join_channel(channel_id: str, current: UserPublic = Depends(get_current_user)):
     db = get_db()
     ch = await db.channels.find_one({"_id": oid(channel_id)})
     if not ch:
         raise HTTPException(404, "Channel not found")
+    if ch.get("kind") == "group" and ch.get("department_group"):
+        raise HTTPException(403, "Department group membership is managed by your employee department")
     if current.id not in ch.get("members", []):
         await db.channels.update_one({"_id": oid(channel_id)}, {"$push": {"members": current.id}})
     return {"ok": True}
