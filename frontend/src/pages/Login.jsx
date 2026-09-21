@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Eye, EyeOff, ArrowRight, ShieldCheck, Bike, Loader2 } from "lucide-react";
+import { Eye, EyeOff, ArrowRight, ShieldCheck, Bike, Loader2, AlertTriangle } from "lucide-react";
 import { WavygoLogo } from "@/components/WavygoLogo";
 import { useAuth } from "@/contexts/AuthContext";
 import { AUTH } from "@/constants/testIds";
@@ -27,6 +27,7 @@ export default function Login() {
   const { user, login } = useAuth();
   const nav = useNavigate();
   const loc = useLocation();
+  const sessionExpired = loc.state?.sessionExpired === true;
   const queryParams = new URLSearchParams(loc.search);
   const prefilledEmail = queryParams.get("email") || loc.state?.email || "";
   const [email, setEmail] = useState(prefilledEmail);
@@ -40,6 +41,15 @@ export default function Login() {
   useEffect(() => {
     api.get("/dashboard/live-kpis").then(({ data }) => setKpis(data.kpis)).catch(() => {});
   }, []);
+
+  /* Show a toast when redirected due to session timeout */
+  useEffect(() => {
+    if (sessionExpired) {
+      toast.warning("Your session has expired due to inactivity. Please log in again.");
+      // Clear the state so a page refresh doesn't re-show the toast
+      window.history.replaceState({}, document.title);
+    }
+  }, [sessionExpired]);
 
   useEffect(() => {
     if (user && user !== false) nav(loc.state?.from || "/dashboard", { replace: true });
@@ -135,6 +145,15 @@ export default function Login() {
           >
             <h2 className="font-display text-3xl font-semibold tracking-tight text-foreground">Welcome to WavyGo OS</h2>
             <p className="text-sm text-muted-foreground mt-2">Sign in with your work credentials to continue.</p>
+
+            {sessionExpired && (
+              <div className="mt-4 flex items-start gap-3 rounded-lg border border-amber-500/30 bg-amber-500/10 px-4 py-3" data-testid="session-expired-banner">
+                <AlertTriangle className="h-5 w-5 text-amber-500 shrink-0 mt-0.5" />
+                <p className="text-[13px] leading-snug text-amber-700 dark:text-amber-300">
+                  Your session has expired due to inactivity. Please log in again.
+                </p>
+              </div>
+            )}
           </motion.div>
 
           <form onSubmit={onSubmit} className="mt-8 space-y-4">

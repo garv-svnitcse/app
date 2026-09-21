@@ -1,10 +1,12 @@
 import { useState } from "react";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { TopNav } from "@/components/layout/TopNav";
+import { useSessionTimeout } from "@/hooks/useSessionTimeout";
 import { cn } from "@/lib/utils";
 
 export function AppShell({ children }) {
   const [collapsed, setCollapsed] = useState(false);
+  useSessionTimeout();
   return (
     <div className="min-h-screen bg-background">
       <Sidebar collapsed={collapsed} onToggle={() => setCollapsed((v) => !v)} />
