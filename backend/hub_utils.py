@@ -1,8 +1,10 @@
 from __future__ import annotations
 """Shared helpers for Part 2+ modules: activity logs, notifications, doc serialisation."""
+import re
 from datetime import datetime, timezone
 from typing import Any, Iterable
 from bson import ObjectId
+
 
 
 def utc_iso() -> str:
@@ -66,6 +68,30 @@ async def notify(db, user_id: str | None, title: str, body: str, kind: str = "in
         "link": link,
         "created_at": utc_iso(),
     })
+
+
+async def find_user(db, user_id: str | ObjectId | None):
+    """Retrieve user document from ERP db by ObjectId, string id, or registered email."""
+    if not user_id:
+        return None
+    user_id_str = str(user_id).strip()
+    if ObjectId.is_valid(user_id_str):
+        try:
+            user = await db.users.find_one({"_id": ObjectId(user_id_str)})
+            if user:
+                return user
+        except Exception:
+            pass
+    user = await db.users.find_one({"_id": user_id_str})
+    if user:
+        return user
+    try:
+        user = await db.users.find_one({"email": {"$regex": f"^{re.escape(user_id_str)}$", "$options": "i"}})
+        if user:
+            return user
+    except Exception:
+        pass
+    return None
 
 
 def role_notification_filter(user_role: str, user_id: str) -> dict:

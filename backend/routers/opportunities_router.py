@@ -1,11 +1,12 @@
 from __future__ import annotations
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from bson import ObjectId
 from db import get_db
 from auth_utils import get_current_user, require_roles
 from models import UserPublic
 from models_part2 import OpportunityIn, OpportunityAssign, OpportunityStatusPatch
 from hub_utils import serialize, serialize_many, oid, utc_iso, log_activity, notify
+from email_utils import notify_assignment_by_email
 
 router = APIRouter(prefix="/opportunities", tags=["opportunities"])
 
@@ -60,6 +61,7 @@ async def list_opps(status: str | None = None, type: str | None = None,
 
 @router.post("", status_code=201)
 async def create_opp(payload: OpportunityIn,
+                     background_tasks: BackgroundTasks,
                      current: UserPublic = Depends(require_roles("Founder", "Admin", "Manager"))):
     db = get_db()
     doc = payload.model_dump()
@@ -73,6 +75,19 @@ async def create_opp(payload: OpportunityIn,
     if doc.get("assignee_id") and doc["assignee_id"] != current.id:
         await notify(db, doc["assignee_id"], "Opportunity assigned",
                      f"{current.name} assigned you: {doc['title']}", kind="info", link="/opportunity-hub")
+    if doc.get("assignee_id"):
+        await notify_assignment_by_email(
+            db=db,
+            assignee_id=doc["assignee_id"],
+            item_type="opportunity",
+            item_title=doc.get("title", "Untitled Opportunity"),
+            assigned_by_name=current.name,
+            assigned_by_role=current.role,
+            priority=doc.get("type"),
+            deadline=doc.get("deadline"),
+            item_id=str(doc["_id"]),
+            background_tasks=background_tasks,
+        )
     return serialize(doc)
 
 
@@ -127,7 +142,9 @@ async def get_opp(opp_id: str, current: UserPublic = Depends(get_current_user)):
 
 
 @router.patch("/{opp_id}")
-async def update_opp(opp_id: str, payload: dict, current: UserPublic = Depends(get_current_user)):
+async def update_opp(opp_id: str, payload: dict,
+                     background_tasks: BackgroundTasks,
+                     current: UserPublic = Depends(get_current_user)):
     db = get_db()
     if current.role == "Intern":
         raise HTTPException(403, "Interns do not have access to opportunities")
@@ -151,12 +168,26 @@ async def update_opp(opp_id: str, payload: dict, current: UserPublic = Depends(g
         raise HTTPException(404, "Not found")
     doc = await db.opportunities.find_one({"_id": oid(opp_id)})
     await _enrich(db, doc)
+    if "assignee_id" in payload and payload["assignee_id"] and payload["assignee_id"] != existing.get("assignee_id"):
+        await notify_assignment_by_email(
+            db=db,
+            assignee_id=payload["assignee_id"],
+            item_type="opportunity",
+            item_title=doc.get("title", existing.get("title", "Untitled Opportunity")),
+            assigned_by_name=current.name,
+            assigned_by_role=current.role,
+            priority=doc.get("type", existing.get("type")),
+            deadline=doc.get("deadline", existing.get("deadline")),
+            item_id=opp_id,
+            background_tasks=background_tasks,
+        )
     await log_activity(db, current, "Updated opportunity", "Opportunity Hub", target=doc["title"])
     return serialize(doc)
 
 
 @router.post("/{opp_id}/assign")
 async def assign_opp(opp_id: str, payload: OpportunityAssign,
+                     background_tasks: BackgroundTasks,
                      current: UserPublic = Depends(require_roles("Founder", "Admin", "Manager"))):
     db = get_db()
     await db.opportunities.update_one({"_id": oid(opp_id)}, {"$set": {"assignee_id": payload.assignee_id, "status": "assigned", "updated_at": utc_iso()}})
@@ -167,6 +198,19 @@ async def assign_opp(opp_id: str, payload: OpportunityAssign,
     if payload.assignee_id != current.id:
         await notify(db, payload.assignee_id, "Opportunity assigned",
                      f"{current.name} assigned you: {doc['title']}", kind="info", link="/opportunity-hub")
+    if payload.assignee_id:
+        await notify_assignment_by_email(
+            db=db,
+            assignee_id=payload.assignee_id,
+            item_type="opportunity",
+            item_title=doc.get("title", "Untitled Opportunity"),
+            assigned_by_name=current.name,
+            assigned_by_role=current.role,
+            priority=doc.get("type"),
+            deadline=doc.get("deadline"),
+            item_id=opp_id,
+            background_tasks=background_tasks,
+        )
     return serialize(doc)
 
 
