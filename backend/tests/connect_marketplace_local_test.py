@@ -93,6 +93,29 @@ def test_create_group_validates_members(api, users):
     assert r.status_code == 422
 
 
+def test_channel_creator_can_edit_metadata(api, users):
+    channel = _channel(api, users["manager"], kind="group", description="Old details",
+                       members=[users["employee"]["id"]])
+    path = f"/connect/channels/{channel['id']}"
+    response = call(api, users["manager"], "PATCH", path,
+                    json={"name": "  updated-name  ", "description": "  Updated details  "})
+    assert response.status_code == 200, response.text
+    assert response.json()["name"] == "updated-name"
+    assert response.json()["description"] == "Updated details"
+    assert response.json()["can_edit"] is True
+    assert _listed(api, users["manager"], channel["id"])["name"] == "updated-name"
+
+
+def test_channel_edit_requires_permission_and_valid_metadata(api, users):
+    channel = _channel(api, users["manager"], kind="group", members=[users["employee"]["id"]])
+    path = f"/connect/channels/{channel['id']}"
+    assert call(api, users["employee"], "PATCH", path, json={"name": "unauthorized"}).status_code == 403
+    assert call(api, users["manager"], "PATCH", path, json={"name": "   "}).status_code == 422
+    assert call(api, users["manager"], "PATCH", path, json={"name": "x" * 81}).status_code == 422
+    assert call(api, users["manager"], "PATCH", path, json={"description": "x" * 501}).status_code == 422
+    assert call(api, users["manager"], "PATCH", path, json={}).status_code == 422
+
+
 def test_create_group_with_members_notifies(api, users, test_db):
     group = _channel(api, users["manager"], kind="group",
                      members=[users["employee"]["id"], users["employee"]["id"], users["manager"]["id"]])

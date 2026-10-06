@@ -838,10 +838,22 @@ async def update_employee(
     if _is_placeholder(target):
         raise HTTPException(400, "This teammate has not accepted their invitation yet — re-invite them to change details")
 
+    if current.role != "Founder" and set(payload.model_fields_set) & FOUNDER_PROFILE_FIELDS:
+        raise HTTPException(403, "Only the Founder can edit employee profile details or documents")
+
     # Decide which fields the caller may change on this target.
     target_role = target.get("role")
     if str(target["_id"]) == current.id:
         allowed = SELF_FIELDS | ({"designation", "department"} if current.role == "Founder" else set())
+        if current.role in ("Founder", "Admin"):
+            allowed |= {
+                "joining_date",
+                "aadhaar_number",
+                "aadhaar_document_id",
+                "aadhaar_document_name",
+                "offer_letter_document_id",
+                "offer_letter_document_name",
+            }
     elif target_role == "Founder":
         raise HTTPException(403, "Only the Founder can edit the Founder profile")
     elif current.role == "Admin" and target_role == "Admin":
@@ -851,14 +863,31 @@ async def update_employee(
             raise HTTPException(403, "Managers can only edit Employees and Interns in their department")
         allowed = SELF_FIELDS | {"designation"}
     else:
-        allowed = ORG_FIELDS
+        allowed = ORG_FIELDS | {
+            "joining_date",
+            "aadhaar_number",
+            "aadhaar_document_id",
+            "aadhaar_document_name",
+            "offer_letter_document_id",
+            "offer_letter_document_name",
+        }
 
     changes = {}
     for key, value in payload.model_dump(exclude_unset=True).items():
         if isinstance(value, str):
             value = value.strip()
-        if key in ("phone", "photo", "designation", "department") and value == "":
+        if key in (
+            "phone", "photo", "designation", "department", "joining_date",
+            "aadhaar_number", "aadhaar_document_id", "aadhaar_document_name",
+            "offer_letter_document_id", "offer_letter_document_name",
+            "employee_documents",
+        ) and value == "":
             value = None
+        if key in ("aadhaar_document_id", "offer_letter_document_id") and value:
+            await _validate_profile_document(db, value)
+        if key == "employee_documents" and value:
+            for document in value:
+                await _validate_profile_document(db, document.get("id"))
         if key == "department" and value:
             value = await _resolve_department(db, value)
         if value == target.get(key) or (value is None and not target.get(key)):

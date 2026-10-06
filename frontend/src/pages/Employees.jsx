@@ -32,11 +32,44 @@ function getInviteLink(token) {
 const ROLE_OPTIONS = ["Admin", "Manager", "Employee", "Intern"];
 const ALL_EMPLOYEES = "__all__";
 const NO_DEPARTMENT = "__none__";
+const EMPTY_EMPLOYEE_FORM = {
+  email: "", name: "", role: "Employee", designation: "", department: "", phone: "",
+  joining_date: "", aadhaar_number: "", aadhaar_document_file: null, offer_letter_document_file: null,
+  other_document_files: [],
+};
+const EMPLOYEE_DOCUMENT_ACCEPT = ".pdf,.png,.jpg,.jpeg,.webp,.docx,.xlsx,.pptx,.csv,.txt";
 
 // Local calendar date (YYYY-MM-DD); toISOString() would give the UTC date.
 // Attendance days are company-local (IST) dates on the server, whatever the browser's timezone.
 function todayLocal() {
   return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+}
+
+async function uploadEmployeeDocument(file, employeeName, documentType) {
+  const body = new FormData();
+  body.append("file", file);
+  body.append("title", `${documentType} - ${employeeName}`.slice(0, 200));
+  body.append("description", "Confidential employee profile document");
+  body.append("access", JSON.stringify({
+    mode: "restricted",
+    roles: ["Founder", "Admin"],
+    departments: [],
+    user_ids: [],
+  }));
+  const { data } = await api.post("/vault/documents", body);
+  return { id: data.id, name: data.file_name || file.name };
+}
+
+async function deleteUploadedEmployeeDocuments(documents) {
+  let failed = 0;
+  for (const document of documents) {
+    try {
+      await api.delete(`/vault/documents/${document.id}`);
+    } catch {
+      failed += 1;
+    }
+  }
+  return failed;
 }
 
 function currentQuarter() {
@@ -76,7 +109,8 @@ function Directory({ onChange }) {
   const canInvite = can("employee.invite");
   const canEdit = can("employee.edit");
   const canReset = can("auth.reset_other_password");
-  const canManageAccount = role === "Founder" || role === "Admin";
+  const isFounder = role === "Founder";
+  const canManageAccount = isFounder || role === "Admin";
   // Roles this user may grant, mirroring the user.invite.* permission matrix.
   const assignableRoles = ROLE_OPTIONS.filter(r => can(`user.invite.${r.toLowerCase()}`));
   const [rows, setRows] = useState([]);
@@ -85,7 +119,7 @@ function Directory({ onChange }) {
   const [invitations, setInvitations] = useState([]);
   const [q, setQ] = useState("");
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ email: "", name: "", role: "Employee", designation: "", department: "", phone: "" });
+  const [form, setForm] = useState(EMPTY_EMPLOYEE_FORM);
   const [resetInfo, setResetInfo] = useState(null);
   const [resetTargetUser, setResetTargetUser] = useState(null);
   const [newPassword, setNewPassword] = useState("");
@@ -93,8 +127,10 @@ function Directory({ onChange }) {
   const [showPassword, setShowPassword] = useState(false);
   const [passwordCopied, setPasswordCopied] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
-  const [editForm, setEditForm] = useState({ name: "", role: "Employee", designation: "", department: "", phone: "" });
-
+  const [editForm, setEditForm] = useState({
+    name: "", role: "Employee", designation: "", department: "", phone: "", joining_date: "",
+    aadhaar_number: "",
+  });
   const [createdInvite, setCreatedInvite] = useState(null);
   const [copied, setCopied] = useState(false);
   const [actionLoadingKey, setActionLoadingKey] = useState(null);
@@ -143,7 +179,7 @@ function Directory({ onChange }) {
       // Only roles that may invite get the dialog; for others the deep link is simply dropped.
       if (canInvite) {
         setCreatedInvite(null);
-        setForm({ email: "", name: "", role: "Employee", designation: "", department: "", phone: "" });
+        setForm({ ...EMPTY_EMPLOYEE_FORM });
         setOpen(true);
       }
       setSearchParams(params => {
@@ -172,14 +208,45 @@ function Directory({ onChange }) {
       return;
     }
     setActionLoadingKey("invite");
+    const uploadedDocuments = [];
     try {
-      const { data } = await api.post("/employees/invite", form);
+      const {
+        aadhaar_document_file: aadhaarFile,
+        offer_letter_document_file: offerLetterFile,
+        other_document_files: otherFiles,
+        ...employeeFields
+      } = form;
+      const documents = {};
+      if (aadhaarFile) {
+        const document = await uploadEmployeeDocument(aadhaarFile, form.name.trim(), "Aadhaar");
+        uploadedDocuments.push(document);
+        documents.aadhaar_document_id = document.id;
+        documents.aadhaar_document_name = document.name;
+      }
+      if (offerLetterFile) {
+        const document = await uploadEmployeeDocument(offerLetterFile, form.name.trim(), "Offer Letter");
+        uploadedDocuments.push(document);
+        documents.offer_letter_document_id = document.id;
+        documents.offer_letter_document_name = document.name;
+      }
+      if (otherFiles?.length) {
+        documents.employee_documents = [];
+        for (const file of otherFiles) {
+          const document = await uploadEmployeeDocument(file, form.name.trim(), "Employee Document");
+          uploadedDocuments.push(document);
+          documents.employee_documents.push(document);
+        }
+      }
+      const { data } = await api.post("/employees/invite", { ...employeeFields, ...documents });
       const url = getInviteLink(data.token);
       setCreatedInvite({ ...data, invite_url: url });
       toast.success(data.message || "Invitation created — share the link");
       load();
     } catch (e) {
       toast.error(formatApiError(e));
+      if (uploadedDocuments.length && await deleteUploadedEmployeeDocuments(uploadedDocuments)) {
+        toast.error("An uploaded employee document could not be removed after the invitation failed. Remove it from the Company Vault.");
+      }
     } finally {
       setActionLoadingKey(null);
     }
@@ -331,7 +398,9 @@ function Directory({ onChange }) {
       role: u.role || "Employee",
       designation: u.designation || "",
       department: u.department || "",
-      phone: u.phone || ""
+      phone: u.phone || "",
+      joining_date: u.joining_date || "",
+      aadhaar_number: u.aadhaar_number || "",
     });
   }
 
@@ -346,7 +415,12 @@ function Directory({ onChange }) {
     if (!editingUser) return;
     setActionLoadingKey("save-edit");
     try {
-      const { data } = await api.patch(`/employees/${editingUser.id}`, editForm);
+      const updates = { ...editForm };
+      if (!isFounder) {
+        delete updates.joining_date;
+        delete updates.aadhaar_number;
+      }
+      const { data } = await api.patch(`/employees/${editingUser.id}`, updates);
       toast.success(`Updated profile for ${data.name || editingUser.name}`);
       setEditingUser(null);
       load();
@@ -362,7 +436,7 @@ function Directory({ onChange }) {
       {selectedDepartment === null ? (
         <>
           <div className="flex justify-end mb-4">
-            {canInvite && <Button onClick={() => { setCreatedInvite(null); setForm({ email: "", name: "", role: "Employee", designation: "", department: "", phone: "" }); setOpen(true); }} data-testid="employee-invite-btn"><UserPlus className="h-4 w-4 mr-1.5" /> Invite teammate</Button>}
+            {canInvite && <Button onClick={() => { setCreatedInvite(null); setForm({ ...EMPTY_EMPLOYEE_FORM }); setOpen(true); }} data-testid="employee-invite-btn"><UserPlus className="h-4 w-4 mr-1.5" /> Invite teammate</Button>}
           </div>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 mb-6">
             <Card className="border-border hover-lift cursor-pointer" onClick={() => setSelectedDepartment(ALL_EMPLOYEES)} data-testid="dept-card-all">
@@ -391,7 +465,7 @@ function Directory({ onChange }) {
           <div className="mb-2 font-display text-[15px] font-semibold">{selectedDepartment === ALL_EMPLOYEES ? (role === "Manager" ? "My team" : "All employees") : selectedDepartment}</div>
           <div className="flex flex-col sm:flex-row gap-2 items-start sm:items-center justify-between">
             <Input placeholder="Search by name, email, role…" value={q} onChange={(e) => setQ(e.target.value)} className="max-w-md" data-testid="employee-search" />
-            {canInvite && <Button onClick={() => { setCreatedInvite(null); setForm({ email: "", name: "", role: "Employee", designation: "", department: "", phone: "" }); setOpen(true); }} data-testid="employee-invite-btn"><UserPlus className="h-4 w-4 mr-1.5" /> Invite teammate</Button>}
+            {canInvite && <Button onClick={() => { setCreatedInvite(null); setForm({ ...EMPTY_EMPLOYEE_FORM }); setOpen(true); }} data-testid="employee-invite-btn"><UserPlus className="h-4 w-4 mr-1.5" /> Invite teammate</Button>}
           </div>
         </div>
       )}
@@ -464,7 +538,7 @@ function Directory({ onChange }) {
                 <TableHead>Designation</TableHead>
                 <TableHead>Contact</TableHead>
                 <TableHead>Status</TableHead>
-                {(canEdit || canReset || canManageAccount) && <TableHead className="text-right">Actions</TableHead>}
+                <TableHead className="text-right">Actions</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -474,10 +548,7 @@ function Directory({ onChange }) {
                 const isDeleteLoading = actionLoadingKey === `del-emp-${targetId}`;
                 const isResetLoading = actionLoadingKey === `reset-${u.id}`;
                 const isSelf = u.id === user?.id;
-                const canEditRow = canEdit && u.role !== "Founder" && (
-                  isSelf
-                  || (role === "Manager" ? ["Employee", "Intern"].includes(u.role) : !(role === "Admin" && u.role === "Admin"))
-                );
+                const canEditRow = canEdit && isFounder && u.role !== "Founder";
                 const canManageRow = canManageAccount && u.role !== "Founder" && !isSelf && !(role === "Admin" && u.role === "Admin");
 
                 return (
@@ -497,9 +568,8 @@ function Directory({ onChange }) {
                         {u.online && <span className="h-2 w-2 rounded-full bg-emerald-500 shrink-0" title="Online now" />}
                       </div>
                     </TableCell>
-                    {(canEdit || canReset || canManageAccount) && (
-                      <TableCell className="text-right">
-                        <div className="flex items-center justify-end gap-1.5">
+                    <TableCell className="text-right">
+                      <div className="flex flex-wrap items-center justify-end gap-1.5">
                           {canEditRow && (
                             <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => startEdit(u)} disabled={!!actionLoadingKey} data-testid={`edit-employee-btn-${u.id}`}>
                               <Pencil className="h-3.5 w-3.5 mr-1" /> Edit
@@ -551,9 +621,8 @@ function Directory({ onChange }) {
                               </Button>
                             </>
                           )}
-                        </div>
-                      </TableCell>
-                    )}
+                      </div>
+                    </TableCell>
                   </TableRow>
                 );
               })}
@@ -563,7 +632,7 @@ function Directory({ onChange }) {
       </Card>}
 
       <Dialog open={open} onOpenChange={(v) => { setOpen(v); if (!v) setCreatedInvite(null); }}>
-        <DialogContent>
+        <DialogContent className="max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-display">{createdInvite ? "Invitation Created" : "Invite teammate"}</DialogTitle>
             <DialogDescription>
@@ -606,12 +675,35 @@ function Directory({ onChange }) {
                     <SelectContent>{assignableRoles.map(r => <SelectItem key={r} value={r}>{r}</SelectItem>)}</SelectContent>
                   </Select>
                 </div>
-                <div><Label>Phone</Label><Input value={form.phone} onChange={(e) => setForm(s => ({ ...s, phone: e.target.value }))} /></div>
+                {isFounder && <div><Label>Phone</Label><Input value={form.phone} onChange={(e) => setForm(s => ({ ...s, phone: e.target.value }))} /></div>}
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div><Label>Designation</Label><Input value={form.designation} onChange={(e) => setForm(s => ({ ...s, designation: e.target.value }))} /></div>
-                <div><Label>Department</Label><DepartmentSelect value={form.department} onChange={(v) => setForm(s => ({ ...s, department: v }))} departments={departments} /></div>
-              </div>
+              {isFounder && (
+                <>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div><Label>Designation</Label><Input value={form.designation} onChange={(e) => setForm(s => ({ ...s, designation: e.target.value }))} /></div>
+                    <div><Label>Department</Label><DepartmentSelect value={form.department} onChange={(v) => setForm(s => ({ ...s, department: v }))} departments={departments} /></div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div><Label>Joining date</Label><Input type="date" value={form.joining_date} onChange={(e) => setForm(s => ({ ...s, joining_date: e.target.value }))} /></div>
+                    <div><Label>Aadhaar number</Label><Input value={form.aadhaar_number} onChange={(e) => setForm(s => ({ ...s, aadhaar_number: e.target.value }))} maxLength={32} autoComplete="off" /></div>
+                  </div>
+                  <div className="space-y-2 rounded-lg border border-border p-3">
+                    <div className="text-xs text-muted-foreground">Employee documents are stored in the Company Vault and restricted to Founders and Admins.</div>
+                    <div>
+                      <Label>Aadhaar document</Label>
+                      <Input type="file" accept={EMPLOYEE_DOCUMENT_ACCEPT} onChange={(e) => { setForm(s => ({ ...s, aadhaar_document_file: e.target.files?.[0] || null })); e.target.value = ""; }} />
+                    </div>
+                    <div>
+                      <Label>Offer letter</Label>
+                      <Input type="file" accept={EMPLOYEE_DOCUMENT_ACCEPT} onChange={(e) => { setForm(s => ({ ...s, offer_letter_document_file: e.target.files?.[0] || null })); e.target.value = ""; }} />
+                    </div>
+                    <div>
+                      <Label>Other employee documents</Label>
+                      <Input type="file" multiple accept={EMPLOYEE_DOCUMENT_ACCEPT} onChange={(e) => { setForm(s => ({ ...s, other_document_files: Array.from(e.target.files || []) })); e.target.value = ""; }} />
+                    </div>
+                  </div>
+                </>
+              )}
             </div>
           )}
 
@@ -809,7 +901,7 @@ function Directory({ onChange }) {
       </Dialog>
 
       <Dialog open={!!editingUser} onOpenChange={(v) => !v && setEditingUser(null)}>
-        <DialogContent data-testid="edit-employee-dialog">
+        <DialogContent className="max-h-[90vh] overflow-y-auto" data-testid="edit-employee-dialog">
           <DialogHeader>
             <DialogTitle className="font-display">Edit Teammate Profile</DialogTitle>
             <DialogDescription>Update role, designation, department, and contact information for {editingUser?.name}.</DialogDescription>
@@ -830,6 +922,12 @@ function Directory({ onChange }) {
               <div><Label>Designation</Label><Input value={editForm.designation} onChange={(e) => setEditForm(s => ({ ...s, designation: e.target.value }))} /></div>
               <div><Label>Department</Label><DepartmentSelect value={editForm.department} onChange={(v) => setEditForm(s => ({ ...s, department: v }))} departments={departments} disabled={!canChangeDepartment} /></div>
             </div>
+            {isFounder && (
+              <div className="grid grid-cols-2 gap-3">
+                <div><Label>Joining date</Label><Input type="date" value={editForm.joining_date} onChange={(e) => setEditForm(s => ({ ...s, joining_date: e.target.value }))} /></div>
+                <div><Label>Aadhaar number</Label><Input value={editForm.aadhaar_number} onChange={(e) => setEditForm(s => ({ ...s, aadhaar_number: e.target.value }))} maxLength={32} autoComplete="off" /></div>
+              </div>
+            )}
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditingUser(null)} disabled={actionLoadingKey === "save-edit"}>Cancel</Button>

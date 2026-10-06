@@ -22,6 +22,7 @@ from routers.settings_router import router as settings_router
 from routers.marketplace_router import router as marketplace_router
 from routers.tasks_router import router as tasks_router
 from routers.employees_router import router as employees_router
+from routers.resources_router import router as resources_router
 from routers.opportunities_router import router as opportunities_router
 from routers.connect_router import router as connect_router
 from routers.vault_router import (
@@ -80,6 +81,7 @@ api.include_router(settings_router)
 api.include_router(marketplace_router)
 api.include_router(tasks_router)
 api.include_router(employees_router)
+api.include_router(resources_router)
 api.include_router(opportunities_router)
 api.include_router(connect_router)
 api.include_router(calendar_router)

@@ -53,11 +53,45 @@ def _login(api, email, password):
 
 def test_invite_and_accept_flow(api, users, depts, test_db):
     email = _email()
-    r = _invite(api, users["founder"], email=email, department="tech")
+    aadhaar_document_id = ObjectId()
+    offer_letter_document_id = ObjectId()
+    other_document_id = ObjectId()
+    for document_id, title in (
+        (aadhaar_document_id, "Aadhaar document"),
+        (offer_letter_document_id, "Offer letter"),
+        (other_document_id, "Other employee document"),
+    ):
+        test_db.vault_documents.insert_one({
+            "_id": document_id,
+            "title": title,
+            "access": {"mode": "restricted", "roles": ["Founder", "Admin"]},
+            "access_keys": ["role:Founder", "role:Admin"],
+        })
+    r = _invite(
+        api,
+        users["founder"],
+        email=email,
+        name="Invitee Example",
+        department="tech",
+        phone="+91 9876543210",
+        joining_date="2026-10-15",
+        aadhaar_number="1234 5678 9012",
+        aadhaar_document_id=str(aadhaar_document_id),
+        aadhaar_document_name="aadhaar.pdf",
+        offer_letter_document_id=str(offer_letter_document_id),
+        offer_letter_document_name="offer-letter.pdf",
+        employee_documents=[{"id": str(other_document_id), "name": "certificate.pdf"}],
+    )
     assert r.status_code == 201, r.text
     body = r.json()
     assert body["token"] and body["email"] == email and body["role"] == "Employee"
     assert body["department"] == "Tech"  # canonical department name
+    assert body["phone"] == "+91 9876543210"
+    assert body["joining_date"] == "2026-10-15"
+    assert body["aadhaar_number"] == "1234 5678 9012"
+    assert body["aadhaar_document_id"] == str(aadhaar_document_id)
+    assert body["offer_letter_document_id"] == str(offer_letter_document_id)
+    assert body["employee_documents"] == [{"id": str(other_document_id), "name": "certificate.pdf"}]
     assert body["email_queued"] is False and "share the link" in body["message"]
     assert body["expires_at"]
 
@@ -72,7 +106,24 @@ def test_invite_and_accept_flow(api, users, depts, test_db):
     r = requests.post(f"{api}/employees/accept-invite", json={"token": body["token"], "password": "Wavygo@2026"})
     assert r.status_code == 200, r.text
     assert _login(api, email, "Wavygo@2026").status_code == 200
-    assert email in [u["email"] for u in call(api, users["founder"], "GET", "/employees").json()]
+    employees = call(api, users["founder"], "GET", "/employees").json()
+    invited = next(employee for employee in employees if employee["email"] == email)
+    assert invited["name"] == "Invitee Example"
+    assert invited["phone"] == "+91 9876543210"
+    assert invited["joining_date"] == "2026-10-15"
+    assert invited["aadhaar_number"] == "1234 5678 9012"
+    assert invited["aadhaar_document_id"] == str(aadhaar_document_id)
+    assert invited["offer_letter_document_id"] == str(offer_letter_document_id)
+    assert invited["employee_documents"] == [{"id": str(other_document_id), "name": "certificate.pdf"}]
+    manager_employee = next(
+        employee
+        for employee in call(api, users["manager"], "GET", "/employees").json()
+        if employee["email"] == email
+    )
+    assert "aadhaar_number" not in manager_employee
+    assert "aadhaar_document_id" not in manager_employee
+    assert "offer_letter_document_id" not in manager_employee
+    assert "employee_documents" not in manager_employee
 
 
 def test_invite_refuses_existing_accounts(api, users, test_db):
@@ -88,6 +139,7 @@ def test_invite_refuses_existing_accounts(api, users, test_db):
 
 def test_invite_role_matrix(api, users):
     assert _invite(api, users["admin"], role="Admin").status_code == 403
+    assert _invite(api, users["admin"], phone="123").status_code == 403
     assert _invite(api, users["founder"], role="Founder").status_code == 403
     assert _invite(api, users["manager"]).status_code == 403
     assert _invite(api, users["founder"], department="Nowhere").status_code == 400
@@ -152,17 +204,33 @@ def test_patch_rules(api, users, depts, test_db):
                               "role": "Admin", "password_hash": "x", "status": "active"})
     assert call(api, users["admin"], "PATCH", f"/employees/{other_admin}", json={"phone": "1"}).status_code == 403
     assert call(api, users["admin"], "PATCH", f"/employees/{emp['id']}", json={"role": "Admin"}).status_code == 403
-    # Admin editing self: profile fields only.
-    assert call(api, users["admin"], "PATCH", f"/employees/{users['admin']['id']}", json={"phone": "999"}).status_code == 200
+    # Employee profile information is managed by the Founder only.
+    assert call(api, users["admin"], "PATCH", f"/employees/{users['admin']['id']}", json={"phone": "999"}).status_code == 403
     assert call(api, users["admin"], "PATCH", f"/employees/{users['admin']['id']}", json={"role": "Manager"}).status_code == 403
-    # Manager: only Employees/Interns of own department, no role/department changes.
+    # Managers cannot edit employee profile information.
     mgr = users["manager"]
     assert call(api, mgr, "PATCH", f"/employees/{users['employee2']['id']}", json={"designation": "x"}).status_code == 403
     assert call(api, mgr, "PATCH", f"/employees/{emp['id']}", json={"role": "Manager"}).status_code == 403
     assert call(api, mgr, "PATCH", f"/employees/{emp['id']}", json={"department": "Sales"}).status_code == 403
     r = call(api, mgr, "PATCH", f"/employees/{emp['id']}",
              json={"designation": "Engineer", "role": "Employee", "department": "Tech"})
-    assert r.status_code == 200 and r.json()["designation"] == "Engineer"
+    assert r.status_code == 403
+    assert call(api, mgr, "PATCH", f"/employees/{emp['id']}",
+                json={"aadhaar_number": "1234 5678 9012"}).status_code == 403
+    assert call(api, users["admin"], "PATCH", f"/employees/{emp['id']}",
+                json={"joining_date": "2026-01-15", "aadhaar_number": "1234 5678 9012"}).status_code == 403
+    assert call(api, users["admin"], "PATCH", f"/employees/{emp['id']}",
+                json={"joining_date": "not-a-date"}).status_code == 422
+    founder_update = call(
+        api,
+        founder,
+        "PATCH",
+        f"/employees/{emp['id']}",
+        json={"phone": "123", "joining_date": "2026-01-15", "aadhaar_number": "1234 5678 9012"},
+    )
+    assert founder_update.status_code == 200
+    assert founder_update.json()["phone"] == "123"
+    assert founder_update.json()["joining_date"] == "2026-01-15"
     # Founder may change roles; unknown departments are refused.
     assert call(api, founder, "PATCH", f"/employees/{emp['id']}", json={"department": "Nowhere"}).status_code == 400
     r = call(api, founder, "PATCH", f"/employees/{other_admin}", json={"role": "Manager"})
