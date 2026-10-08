@@ -11,8 +11,11 @@ from fastapi import (
     Depends,
     HTTPException,
     BackgroundTasks,
+    UploadFile,
+    File,
+    Form,
 )
-
+from services.image_service import upload_file
 from bson import ObjectId
 
 from db import get_db
@@ -238,7 +241,177 @@ async def list_employees(
 
     return serialize_many(docs)
 
+@router.post("/{employee_id}/profile/document")
+async def upload_employee_document(
+    employee_id: str,
+    file: UploadFile = File(...),
+    section: str = Form(...),
+    document_type: str = Form(...),
+    current: UserPublic = Depends(get_current_user),
+):
+    """
+    Upload an employee profile document to Cloudinary
+    and save its URL in employee_profiles.
+    """
 
+    db = get_db()
+    target = await _get_employee(db, employee_id)
+
+    is_self = str(target["_id"]) == current.id
+    is_admin = current.role in ADMIN_ROLES
+
+    # Employee can upload their own submitted documents.
+    # Founder/Admin can upload both submitted and company documents.
+    if section == "submitted":
+        if not (is_self or is_admin):
+            raise HTTPException(
+                403,
+                "Only the employee or an admin can upload submitted documents",
+            )
+    elif section == "company":
+        if not is_admin:
+            raise HTTPException(
+                403,
+                "Only Founder/Admin can upload company documents",
+            )
+    else:
+        raise HTTPException(
+            400,
+            "Invalid section. Use 'submitted' or 'company'",
+        )
+
+    allowed_documents = {
+        "submitted": {
+            "resume",
+            "id_proof",
+            "other",
+        },
+        "company": {
+            "offer_letter",
+            "employment_agreement",
+            "other",
+        },
+    }
+
+    if document_type not in allowed_documents[section]:
+        raise HTTPException(
+            400,
+            f"Invalid document type for {section}",
+        )
+
+    uploaded = await upload_file(file)
+
+    now = utc_iso()
+
+    # Single documents replace the previous document.
+    if document_type == "resume":
+        update_field = "submitted.resume_url"
+        update_value = uploaded["url"]
+
+        update = {
+            "$set": {
+                update_field: update_value,
+                "updated_at": now,
+            },
+            "$setOnInsert": {
+                "created_at": now,
+            },
+        }
+
+    elif document_type == "id_proof":
+        update_field = "submitted.id_proof_url"
+        update_value = uploaded["url"]
+
+        update = {
+            "$set": {
+                update_field: update_value,
+                "updated_at": now,
+            },
+            "$setOnInsert": {
+                "created_at": now,
+            },
+        }
+
+    elif document_type == "offer_letter":
+        update_field = "company.offer_letter_url"
+        update_value = uploaded["url"]
+
+        update = {
+            "$set": {
+                update_field: update_value,
+                "updated_at": now,
+            },
+            "$setOnInsert": {
+                "created_at": now,
+            },
+        }
+
+    elif document_type == "employment_agreement":
+        update_field = "company.employment_agreement_url"
+        update_value = uploaded["url"]
+
+        update = {
+            "$set": {
+                update_field: update_value,
+                "updated_at": now,
+            },
+            "$setOnInsert": {
+                "created_at": now,
+            },
+        }
+
+    else:
+        # Other documents can have multiple files.
+        other_field = f"{section}.other_documents"
+
+        update = {
+            "$push": {
+                other_field: {
+                    "url": uploaded["url"],
+                    "name": uploaded["name"],
+                    "size": uploaded["size"],
+                    "content_type": uploaded["content_type"],
+                    "public_id": uploaded["public_id"],
+                    "resource_type": uploaded["resource_type"],
+                }
+            },
+            "$set": {
+                "updated_at": now,
+            },
+            "$setOnInsert": {
+                "created_at": now,
+            },
+        }
+
+    await db.employee_profiles.update_one(
+        {"employee_id": str(target["_id"])},
+        update,
+        upsert=True,
+    )
+
+    await log_activity(
+        db,
+        current,
+        "Uploaded employee document",
+        "Employees",
+        target=target["name"],
+        meta={
+            "section": section,
+            "document_type": document_type,
+            "filename": uploaded["name"],
+        },
+    )
+
+    doc = await db.employee_profiles.find_one(
+        {"employee_id": str(target["_id"])}
+    )
+
+    return {
+        "ok": True,
+        "message": "Document uploaded successfully",
+        "document": uploaded,
+        "profile": _profile_out(doc, current, target),
+    }
 # ============================================================
 # INVITE EMPLOYEE
 # ============================================================
