@@ -112,8 +112,7 @@ export default function WavygoConnect() {
   const [users, setUsers] = useState([]);
   const [activeId, setActiveId] = useState(null);
   const [messages, setMessages] = useState([]);
-  const [editingId, setEditingId] = useState(null);   // message being edited inline
-  const [editText, setEditText] = useState("");
+  const [editingId, setEditingId] = useState(null);   // message being edited in the composer
   const [savingEdit, setSavingEdit] = useState(false);
   const [deleting, setDeleting] = useState(null);     // message awaiting delete confirmation
   // Re-render every 30s so Edit/Delete disappear once a message's edit window closes.
@@ -131,6 +130,8 @@ export default function WavygoConnect() {
   const [dmOpen, setDmOpen] = useState(false);
   const [dmSearch, setDmSearch] = useState("");
   const [form, setForm] = useState({ name: "", kind: "channel", description: "", members: [], departments: [] });
+  const [editingChannel, setEditingChannel] = useState(null);
+  const [returnToManage, setReturnToManage] = useState(false);
   const [departments, setDepartments] = useState([]);
   const [addOpen, setAddOpen] = useState(false);
   const [addSel, setAddSel] = useState([]);
@@ -240,6 +241,14 @@ export default function WavygoConnect() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => { if (manageOpen) { setManageQ(""); loadManageRows(); } }, [manageOpen]);
 
+  function openEditChannel(channel, fromManage = false) {
+    setEditingChannel(channel);
+    setReturnToManage(fromManage);
+    setForm({ name: channel.name || "", kind: channel.kind, description: channel.description || "", members: [], departments: [] });
+    if (fromManage) setManageOpen(false);
+    setCreateOpen(true);
+  }
+
   function openMembers(ch, viaManage = false) {
     setTarget(ch); setFromManage(viaManage);
     if (viaManage) setManageOpen(false);
@@ -294,6 +303,7 @@ export default function WavygoConnect() {
     activeIdRef.current = activeId;
     msgSigRef.current = "";
     setEditingId(null);
+    setText("");
     if (activeId) {
       loadMessages(activeId, { scroll: true });
       const t = setInterval(() => loadMessages(activeId, { silent: true }), 5000);
@@ -312,6 +322,24 @@ export default function WavygoConnect() {
     if (!form.name.trim() || busy) return;
     setBusy(true);
     try {
+      if (editingChannel) {
+        const { data } = await api.patch(`/connect/channels/${editingChannel.id}`, {
+          name: form.name.trim(), description: form.description.trim(),
+        });
+        const reopenManage = returnToManage;
+        toast.success("Channel details updated");
+        setCreateOpen(false);
+        setEditingChannel(null);
+        setReturnToManage(false);
+        setForm({ name: "", kind: "channel", description: "", members: [], departments: [] });
+        setChannels((list) => list.map((channel) => channel.id === data.id ? { ...channel, ...data } : channel));
+        await loadChannels(null, true);
+        if (reopenManage) {
+          await loadManageRows();
+          setManageOpen(true);
+        }
+        return;
+      }
       const pick = form.kind !== "announcement";
       const { data } = await api.post("/connect/channels", {
         name: form.name.trim(), kind: form.kind, description: form.description.trim(),
@@ -395,16 +423,16 @@ export default function WavygoConnect() {
 
   function startEdit(m) {
     setEditingId(m.id);
-    setEditText(m.body);
+    setText(m.body);
   }
 
   function cancelEdit() {
     setEditingId(null);
-    setEditText("");
+    setText("");
   }
 
   async function saveEdit(m) {
-    const body = editText.trim();
+    const body = text.trim();
     if (!body || savingEdit) return;
     if (body === m.body) { cancelEdit(); return; }
     setSavingEdit(true);
@@ -433,6 +461,11 @@ export default function WavygoConnect() {
   }
 
   async function send() {
+    if (editingId) {
+      const message = messages.find((m) => m.id === editingId);
+      if (message) await saveEdit(message);
+      return;
+    }
     if (!text.trim() || !activeId || sendingRef.current) return;
     sendingRef.current = true;
     try {
@@ -680,6 +713,11 @@ export default function WavygoConnect() {
                         <UserPlus className="h-4 w-4 mr-1.5" /> Add members
                       </Button>
                     )}
+                    {active.can_edit && (
+                      <Button variant="ghost" size="sm" onClick={() => openEditChannel(active)} data-testid="connect-channel-edit-btn">
+                        <Pencil className="h-4 w-4 mr-1.5" /> Edit
+                      </Button>
+                    )}
                   </>
                 )}
               </div>
@@ -692,91 +730,53 @@ export default function WavygoConnect() {
                   const canEditMsg = mine && !m.deleted && open;
                   const canDeleteMsg = !m.deleted && (isOrgAdmin || (mine && open));
                   const left = mine && open ? minutesLeft(m) : null;
-                  const editing = editingId === m.id;
-                  // Day separator: show when the date changes between consecutive messages
-                  const prevMsg = idx > 0 ? messages[idx - 1] : null;
-                  const curDay = m.created_at ? new Date(m.created_at).toDateString() : "";
-                  const prevDay = prevMsg?.created_at ? new Date(prevMsg.created_at).toDateString() : "";
-                  const showSep = curDay && curDay !== prevDay;
                   return (
-                    <div key={m.id}>
-                      {showSep && (
-                        <div className="flex items-center gap-3 my-3">
-                          <div className="flex-1 h-px bg-border" />
-                          <span className="text-[10.5px] font-medium text-muted-foreground uppercase tracking-wide select-none">{formatDateSeparator(m.created_at)}</span>
-                          <div className="flex-1 h-px bg-border" />
+                    <div key={m.id} className={cn("group flex gap-2.5", mine && "flex-row-reverse")} data-testid="connect-message">
+                      <Avatar className="h-7 w-7 shrink-0"><AvatarImage src={m.sender_photo || undefined} /><AvatarFallback className="text-[9px] bg-wavygo-100 text-wavygo-800">{initials(m.sender_name)}</AvatarFallback></Avatar>
+                      <div className={cn("max-w-[70%] min-w-0", mine && "text-right")}>
+                        <div className={cn("flex items-baseline gap-2 mb-0.5", mine && "flex-row-reverse")}>
+                          <span className="text-[12px] font-medium">{m.sender_name}</span>
+                          <span className="text-[10.5px] text-muted-foreground">{(() => { try { return formatDistanceToNow(new Date(m.created_at), { addSuffix: true }); } catch { return ""; } })()}</span>
+                          {m.edited_at && !m.deleted && <span className="text-[10.5px] text-muted-foreground italic" title={`Edited ${new Date(m.edited_at).toLocaleString()}`}>(edited)</span>}
                         </div>
-                      )}
-                      <div className={cn("group flex gap-2.5", mine && "flex-row-reverse")} data-testid="connect-message">
-                        <Avatar className="h-7 w-7 shrink-0"><AvatarImage src={m.sender_photo || undefined} /><AvatarFallback className="text-[9px] bg-wavygo-100 text-wavygo-800">{initials(m.sender_name)}</AvatarFallback></Avatar>
-                        <div className={cn("max-w-[70%] min-w-0", mine && "text-right", editing && "w-full")}>
-                          <div className={cn("flex items-baseline gap-2 mb-0.5", mine && "flex-row-reverse")}>
-                            <span className="text-[12px] font-medium">{m.sender_name}</span>
-                            <span className="text-[10.5px] text-muted-foreground cursor-default" title={formatChatTimeFull(m.created_at)}>{formatChatTime(m.created_at)}</span>
-                            {m.edited_at && !m.deleted && <span className="text-[10.5px] text-muted-foreground italic" title={`Edited ${formatChatTimeFull(m.edited_at)}`}>(edited)</span>}
-                          </div>
-                          <div className={cn("flex items-center gap-1", mine && "flex-row-reverse")}>
-                            {editing ? (
-                              <div className="w-full text-left space-y-1.5">
-                                <Textarea
-                                  autoFocus
-                                  rows={2}
-                                  maxLength={4000}
-                                  value={editText}
-                                  onChange={(e) => setEditText(e.target.value)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); saveEdit(m); }
-                                    if (e.key === "Escape") { e.preventDefault(); cancelEdit(); }
-                                  }}
-                                  className="text-[13.5px] min-h-[60px]"
-                                  data-testid="connect-edit-input"
-                                />
-                                <div className="flex items-center justify-end gap-1.5">
-                                  <span className="text-[10.5px] text-muted-foreground mr-auto">Enter to save · Esc to cancel</span>
-                                  <Button size="sm" variant="ghost" className="h-7 gap-1" onClick={cancelEdit}><X className="h-3.5 w-3.5" />Cancel</Button>
-                                  <Button size="sm" className="h-7 gap-1" onClick={() => saveEdit(m)} disabled={!editText.trim() || savingEdit} data-testid="connect-edit-save">
-                                    <Check className="h-3.5 w-3.5" />Save
-                                  </Button>
-                                </div>
-                              </div>
-                            ) : m.deleted ? (
-                              <div className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-[13px] italic text-muted-foreground border border-dashed border-border">
-                                <Ban className="h-3.5 w-3.5" /> This message was deleted
-                              </div>
-                            ) : (
-                              <div className={cn("inline-block rounded-lg px-3 py-2 text-[13.5px] leading-relaxed whitespace-pre-wrap break-words text-left", mine ? "bg-primary text-primary-foreground" : "bg-muted text-foreground")}>
-                                {m.body}
-                              </div>
-                            )}
-                            {!editing && !m.deleted && (
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <button type="button" aria-label="Message options" data-testid="connect-message-menu"
-                                          className="shrink-0 h-7 w-7 rounded-md flex items-center justify-center text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 hover:bg-muted transition-opacity">
-                                    <MoreHorizontal className="h-4 w-4" />
-                                  </button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align={mine ? "end" : "start"} className="w-40">
-                                  <DropdownMenuItem onSelect={() => copyMessage(m)}><Copy className="h-4 w-4 mr-2" />Copy text</DropdownMenuItem>
-                                  {canEditMsg && <DropdownMenuItem onSelect={() => startEdit(m)} data-testid="connect-message-edit"><Pencil className="h-4 w-4 mr-2" />Edit</DropdownMenuItem>}
-                                  {mine && !open && !isOrgAdmin && (
-                                    <div className="px-2 py-1.5 text-[11px] text-muted-foreground">Edit and delete are only possible for 15 minutes after sending.</div>
-                                  )}
-                                  {left !== null && (
-                                    <div className="px-2 py-1 text-[11px] text-muted-foreground">Editable for {left} more min</div>
-                                  )}
-                                  {canDeleteMsg && (
-                                    <>
-                                      <DropdownMenuSeparator />
-                                      <DropdownMenuItem onSelect={() => setDeleting(m)} className="text-destructive focus:text-destructive" data-testid="connect-message-delete">
-                                        <Trash2 className="h-4 w-4 mr-2" />{mine ? "Delete" : "Delete (moderate)"}
-                                      </DropdownMenuItem>
-                                    </>
-                                  )}
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            )}
-                          </div>
+                        <div className={cn("flex items-center gap-1", mine && "flex-row-reverse")}>
+                          {m.deleted ? (
+                            <div className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-[13px] italic text-muted-foreground border border-dashed border-border">
+                              <Ban className="h-3.5 w-3.5" /> This message was deleted
+                            </div>
+                          ) : (
+                            <div className={cn("inline-block rounded-lg px-3 py-2 text-[13.5px] leading-relaxed whitespace-pre-wrap break-words text-left", mine ? "bg-primary text-primary-foreground" : "bg-muted text-foreground")}>
+                              {m.body}
+                            </div>
+                          )}
+                          {!editingId && !m.deleted && (
+                            <DropdownMenu>
+                              <DropdownMenuTrigger asChild>
+                                <button type="button" aria-label="Message options" data-testid="connect-message-menu"
+                                        className="shrink-0 h-7 w-7 rounded-md flex items-center justify-center text-muted-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 hover:bg-muted transition-opacity">
+                                  <MoreHorizontal className="h-4 w-4" />
+                                </button>
+                              </DropdownMenuTrigger>
+                              <DropdownMenuContent align={mine ? "end" : "start"} className="w-40">
+                                <DropdownMenuItem onSelect={() => copyMessage(m)}><Copy className="h-4 w-4 mr-2" />Copy text</DropdownMenuItem>
+                                {canEditMsg && <DropdownMenuItem onSelect={() => startEdit(m)} data-testid="connect-message-edit"><Pencil className="h-4 w-4 mr-2" />Edit</DropdownMenuItem>}
+                                {mine && !open && !isOrgAdmin && (
+                                  <div className="px-2 py-1.5 text-[11px] text-muted-foreground">Edit and delete are only possible for 15 minutes after sending.</div>
+                                )}
+                                {left !== null && (
+                                  <div className="px-2 py-1 text-[11px] text-muted-foreground">Editable for {left} more min</div>
+                                )}
+                                {canDeleteMsg && (
+                                  <>
+                                    <DropdownMenuSeparator />
+                                    <DropdownMenuItem onSelect={() => setDeleting(m)} className="text-destructive focus:text-destructive" data-testid="connect-message-delete">
+                                      <Trash2 className="h-4 w-4 mr-2" />{mine ? "Delete" : "Delete (moderate)"}
+                                    </DropdownMenuItem>
+                                  </>
+                                )}
+                              </DropdownMenuContent>
+                            </DropdownMenu>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -784,18 +784,23 @@ export default function WavygoConnect() {
                 })}
               </div>
 
-              {(active.kind !== "announcement" || canPostAnnouncement) && (
+              {(editingId || active.kind !== "announcement" || canPostAnnouncement) && (
                 <div className="border-t border-border px-4 py-3 flex items-center gap-2">
+                  {editingId && <span className="text-xs text-muted-foreground shrink-0">Editing</span>}
                   <Input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => {
                            if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
-                           else if (e.key === "ArrowUp" && !text) {
+                           else if (e.key === "Escape" && editingId) { e.preventDefault(); cancelEdit(); }
+                           else if (e.key === "ArrowUp" && !text && !editingId) {
                              const last = [...messages].reverse().find((m) => m.sender_id === user?.id && !m.deleted && withinWindow(m));
                              if (last) { e.preventDefault(); startEdit(last); }
                            }
                          }}
-                         placeholder={`Message ${active.kind === "dm" ? active.display_name || active.name : "#" + active.name}`}
-                         className="h-10" data-testid="connect-message-input" />
-                  <Button onClick={send} disabled={!text.trim()} data-testid="connect-send-btn"><Send className="h-4 w-4" /></Button>
+                         placeholder={editingId ? "Edit message" : `Message ${active.kind === "dm" ? active.display_name || active.name : "#" + active.name}`}
+                         maxLength={4000} className="h-10" data-testid="connect-message-input" />
+                  {editingId && <Button variant="outline" onClick={cancelEdit} data-testid="connect-edit-cancel"><X className="h-4 w-4 mr-1" />Cancel</Button>}
+                  <Button onClick={send} disabled={!text.trim() || (editingId && savingEdit)} data-testid={editingId ? "connect-edit-save" : "connect-send-btn"}>
+                    {editingId ? <><Check className="h-4 w-4 mr-1" />Update</> : <Send className="h-4 w-4" />}
+                  </Button>
                 </div>
               )}
             </>
@@ -826,12 +831,19 @@ export default function WavygoConnect() {
       </AlertDialog>
 
       {/* New channel dialog */}
-      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+      <Dialog open={createOpen} onOpenChange={(open) => {
+        setCreateOpen(open);
+        if (!open && editingChannel) {
+          setEditingChannel(null);
+          setReturnToManage(false);
+          setForm({ name: "", kind: "channel", description: "", members: [], departments: [] });
+        }
+      }}>
         <DialogContent>
-          <DialogHeader><DialogTitle className="font-display">New channel</DialogTitle><DialogDescription>Only the people and departments you add can see, read and post in channels and groups. Announcements reach everyone.</DialogDescription></DialogHeader>
+          <DialogHeader><DialogTitle className="font-display">{editingChannel ? "Edit channel" : "New channel"}</DialogTitle><DialogDescription>{editingChannel ? "Update the channel name and description." : "Only the people and departments you add can see, read and post in channels and groups. Announcements reach everyone."}</DialogDescription></DialogHeader>
           <div className="space-y-3">
-            <div><Label>Name</Label><Input value={form.name} onChange={(e) => setForm(s => ({ ...s, name: e.target.value }))} placeholder="e.g. patna-ops" /></div>
-            <div>
+            <div><Label htmlFor="connect-channel-name">Name</Label><Input id="connect-channel-name" maxLength={80} value={form.name} onChange={(e) => setForm(s => ({ ...s, name: e.target.value }))} placeholder="e.g. patna-ops" /></div>
+            {!editingChannel && <div>
               <Label>Kind</Label>
               <Select value={form.kind} onValueChange={(v) => setForm(s => ({ ...s, kind: v }))}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
@@ -841,9 +853,9 @@ export default function WavygoConnect() {
                   {canCreateAnnouncement && <SelectItem value="announcement">Announcement — broadcast</SelectItem>}
                 </SelectContent>
               </Select>
-            </div>
-            <div><Label>Description</Label><Textarea rows={2} value={form.description} onChange={(e) => setForm(s => ({ ...s, description: e.target.value }))} /></div>
-            {form.kind !== "announcement" && (
+            </div>}
+            <div><Label htmlFor="connect-channel-description">Description</Label><Textarea id="connect-channel-description" rows={2} maxLength={500} value={form.description} onChange={(e) => setForm(s => ({ ...s, description: e.target.value }))} /></div>
+            {!editingChannel && form.kind !== "announcement" && (
               <>
                 <DepartmentPicker departments={departments} selected={form.departments} onChange={(departments) => setForm(s => ({ ...s, departments }))} />
                 <MemberPicker users={users} selected={form.members} onChange={(members) => setForm(s => ({ ...s, members }))} />
@@ -851,7 +863,7 @@ export default function WavygoConnect() {
               </>
             )}
           </div>
-          <DialogFooter><Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button><Button onClick={createChannel} disabled={!form.name.trim() || busy} data-testid="connect-create-submit">Create</Button></DialogFooter>
+          <DialogFooter><Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button><Button onClick={createChannel} disabled={!form.name.trim() || busy} data-testid={editingChannel ? "connect-channel-edit-submit" : "connect-create-submit"}>{editingChannel ? "Save changes" : "Create"}</Button></DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -975,6 +987,11 @@ export default function WavygoConnect() {
                     <Button variant="outline" size="sm" className="h-7 px-2 text-[12px]" disabled={busy}
                             onClick={() => { setConvertDepts([]); setManageOpen(false); setConvertRow(r); }} data-testid="connect-convert-btn">
                       <Lock className="h-3.5 w-3.5 mr-1" /> Make members-only
+                    </Button>
+                  )}
+                  {r.can_edit && (
+                    <Button variant="ghost" size="sm" className="h-7 px-2 text-[12px]" onClick={() => openEditChannel(r, true)} data-testid="connect-manage-edit-btn">
+                      <Pencil className="h-3.5 w-3.5 mr-1" /> Edit
                     </Button>
                   )}
                   {r.members_only && r.kind !== "announcement" && (

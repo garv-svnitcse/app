@@ -25,6 +25,7 @@ import { usePermission } from "@/hooks/usePermission";
 import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { format, formatDistanceToNow, parseISO } from "date-fns";
+import ResourcesSection from "@/components/dashboard/ResourcesSection";
 
 const KPI_ICONS = {
   revenue: IndianRupee, revenue_today: IndianRupee, revenue_week: IndianRupee,
@@ -709,6 +710,7 @@ export default function Dashboard() {
           </Card>
         )}
       </div>
+      {user?.role === "Founder" && <ResourcesSection />}
     </div>
   );
 }
