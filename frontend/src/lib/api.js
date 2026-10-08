@@ -33,12 +33,19 @@ api.interceptors.request.use((cfg) => {
   return cfg;
 });
 
+// Endpoints that authenticate by credentials or refresh token, so a 401 from them must not trigger a refresh.
+// Everything else (including /auth/me and /auth/logout, so an expired access token still revokes the
+// session server-side) retries once with a fresh access token.
+const NO_REFRESH = /\/auth\/(login|refresh|forgot-password|reset-password)/;
+
+const PUBLIC_PATHS = /^\/(login|accept-invite|reset-password)\/?$/;
+
 let refreshing = null;
 api.interceptors.response.use(
   (r) => r,
   async (err) => {
     const original = err.config;
-    if (err.response?.status === 401 && !original._retry && tokens.refresh && !original.url?.includes("/auth/")) {
+    if (err.response?.status === 401 && original && !original._retry && tokens.refresh && !NO_REFRESH.test(original.url || "")) {
       original._retry = true;
       try {
         refreshing = refreshing || axios.post(`${API_BASE}/auth/refresh`, { refresh_token: tokens.refresh });
@@ -50,8 +57,15 @@ api.interceptors.response.use(
       } catch (e) {
         refreshing = null;
         tokens.clear();
-        if (typeof window !== "undefined") window.location.href = "/login";
+        // Public pages (invite / reset links) must stay put: a stale session there would otherwise bounce the
+        // user to /login and lose the one-time token in the URL.
+        if (typeof window !== "undefined" && !PUBLIC_PATHS.test(window.location.pathname)) window.location.href = "/login";
       }
+    }
+    // A user deactivated mid-session gets 403 on every call; end the session instead of leaving a broken app.
+    if (err.response?.status === 403 && tokens.access && /^Account is deactivated/.test(err.response?.data?.detail || "")) {
+      tokens.clear();
+      if (typeof window !== "undefined" && !PUBLIC_PATHS.test(window.location.pathname)) window.location.href = "/login";
     }
     return Promise.reject(err);
   }

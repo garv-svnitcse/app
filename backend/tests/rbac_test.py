@@ -4,21 +4,20 @@ from __future__ import annotations
 Covers: login for 5 roles, password policy, reset-password, marketplace gate,
 task/opportunity/connect/activity gates, register gating, dashboard shape.
 """
-import os
 # pyrefly: ignore [missing-import]
 import pytest
 import requests
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://app-eta-flax-97.vercel.app").rstrip("/")
-API = f"{BASE_URL}/api"
+# End-to-end suite against a running deployment. Opt in by pointing WAVYGO_E2E_URL at it
+# (e.g. a staging backend); without it the suite is skipped so CI never hits production.
+# Credentials come from the environment (FOUNDER_EMAIL / FOUNDER_PASSWORD, see e2e_accounts.py).
+from e2e_accounts import API, E2E_SKIP, FOUNDER, ADMIN, MANAGER, EMPLOYEE, INTERN  # noqa: E402
 
-CREDS = {
-    "Founder":  (os.environ.get("FOUNDER_EMAIL", "founder@wavygo.in"),  "Wavygo@2026"),
-    "Admin":    ("admin@wavygo.in",    "Wavygo@2026"),
-    "Manager":  ("manager@wavygo.in",  "Wavygo@2026"),
-    "Employee": ("employee@wavygo.in", "Wavygo@2026"),
-    "Intern":   ("intern@wavygo.in",   "Wavygo@2026"),
-}
+pytestmark = E2E_SKIP
+CREDS = {role: (c["email"], c["password"]) for role, c in
+         (("Founder", FOUNDER), ("Admin", ADMIN), ("Manager", MANAGER), ("Employee", EMPLOYEE), ("Intern", INTERN))}
+# Password for throwaway users this suite tries to register; not a real account's password.
+NEW_USER_PASSWORD = "E2e-NewUser@2026"
 
 
 def _login(email, password):
@@ -56,13 +55,13 @@ def test_change_own_password_gates(tokens):
     for role in ("Employee", "Intern"):
         r = requests.post(f"{API}/users/me/password",
                           headers=H(tokens, role),
-                          json={"current_password": "Wavygo@2026", "new_password": "Wavygo@2026"})
+                          json={"current_password": CREDS[role][1], "new_password": CREDS[role][1]})
         assert r.status_code == 403, f"{role} change_password expected 403 got {r.status_code}: {r.text}"
 
     # Manager -> 200
     r = requests.post(f"{API}/users/me/password",
                       headers=H(tokens, "Manager"),
-                      json={"current_password": "Wavygo@2026", "new_password": "Wavygo@2026"})
+                      json={"current_password": MANAGER["password"], "new_password": MANAGER["password"]})
     assert r.status_code == 200, f"Manager change_password expected 200 got {r.status_code}: {r.text}"
 
 
@@ -190,19 +189,19 @@ def test_register_gating(tokens):
     # Employee/Intern -> 403
     for role in ("Employee", "Intern", "Manager"):
         r = requests.post(f"{API}/auth/register", headers=H(tokens, role),
-                          json={"email": f"test_reg_{role}@wavygo.in", "password": "Wavygo@2026",
+                          json={"email": f"test_reg_{role}@wavygo.in", "password": NEW_USER_PASSWORD,
                                 "name": "X", "role": "Employee"})
         assert r.status_code == 403, f"{role} register expected 403 got {r.status_code}: {r.text}"
 
     # Admin cannot create Admin
     r = requests.post(f"{API}/auth/register", headers=H(tokens, "Admin"),
-                      json={"email": "test_admin_by_admin@wavygo.in", "password": "Wavygo@2026",
+                      json={"email": "test_admin_by_admin@wavygo.in", "password": NEW_USER_PASSWORD,
                             "name": "X", "role": "Admin"})
     assert r.status_code == 403, f"Admin creating Admin expected 403 got {r.status_code}: {r.text}"
 
     # Admin cannot create Founder
     r = requests.post(f"{API}/auth/register", headers=H(tokens, "Admin"),
-                      json={"email": "test_founder_by_admin@wavygo.in", "password": "Wavygo@2026",
+                      json={"email": "test_founder_by_admin@wavygo.in", "password": NEW_USER_PASSWORD,
                             "name": "X", "role": "Founder"})
     assert r.status_code == 403, f"Admin creating Founder expected 403 got {r.status_code}: {r.text}"
 

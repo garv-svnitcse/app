@@ -2,20 +2,19 @@ from __future__ import annotations
 """WavyGo OS Part 2 backend API tests — Marketplace, Tasks, Employees,
 Opportunities, WavyGo Connect + enhanced Dashboard. Uses only public backend
 URL. Idempotent — extra rows created here are fine, seed is idempotent."""
-import os
 import time
 import uuid
 import pytest
 import requests
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "https://app-eta-flax-97.vercel.app").rstrip("/")
-API = f"{BASE_URL}/api"
+# End-to-end suite against a running deployment. Opt in by pointing WAVYGO_E2E_URL at it
+# (e.g. a staging backend); without it the suite is skipped so CI never hits production.
+# Credentials come from the environment (FOUNDER_EMAIL / FOUNDER_PASSWORD, see e2e_accounts.py).
+from e2e_accounts import API, E2E_SKIP, FOUNDER, ADMIN, MANAGER, EMPLOYEE, INTERN  # noqa: E402
 
-FOUNDER  = {"email": "anilanand635@gmail.com", "password": "Wavygo@2026"}
-ADMIN    = {"email": "admin@wavygo.in",        "password": "Wavygo@2026"}
-MANAGER  = {"email": "manager@wavygo.in",      "password": "Wavygo@2026"}
-EMPLOYEE = {"email": "employee@wavygo.in",     "password": "Wavygo@2026"}
-INTERN   = {"email": "intern@wavygo.in",       "password": "Wavygo@2026"}
+pytestmark = E2E_SKIP
+# Password for throwaway users this suite invites; not a real account's password.
+INVITE_PASSWORD = "E2e-Invite@2026"
 
 
 def _login(email, password):
@@ -332,11 +331,11 @@ def test_employees_invite_by_founder(founder_h):
     token = body["token"]
 
     # Accept invitation
-    r_accept = requests.post(f"{API}/employees/accept-invite", json={"token": token, "password": "Wavygo@2026"})
+    r_accept = requests.post(f"{API}/employees/accept-invite", json={"token": token, "password": INVITE_PASSWORD})
     assert r_accept.status_code == 200, r_accept.text
 
     # Verify login with new user after acceptance
-    d = _login(email, "Wavygo@2026")
+    d = _login(email, INVITE_PASSWORD)
     assert d["user"]["email"] == email
 
 

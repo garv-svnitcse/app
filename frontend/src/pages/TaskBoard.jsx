@@ -12,20 +12,28 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Plus, ClipboardList, CheckCircle2, Clock, Sparkles, Calendar as CalIcon, MessageSquare, Trash2, FileText, Paperclip, Download, X, ExternalLink, Github, Linkedin, Link as LinkIcon, Loader2, List, LayoutGrid, ArrowUpDown, Calendar } from "lucide-react";
+import { useLiveRefresh } from "@/hooks/useLiveRefresh";
 import { api, formatApiError } from "@/lib/api";
 import { usePermission } from "@/hooks/usePermission";
+import { useAuth } from "@/contexts/AuthContext";
 import { toast } from "sonner";
 
 const STATUS_ORDER = ["todo", "in_progress", "review", "completed", "cancelled"];
 const STATUS_LABEL = { todo: "To do", in_progress: "In progress", review: "Review", completed: "Completed", cancelled: "Cancelled" };
+const PRIORITIES = ["low", "medium", "high", "urgent"];
+const EMPTY_FORM = { title: "", description: "", status: "todo", priority: "medium", module: "General", attachments: [], link: "" };
+
+// "YYYY-MM-DD" due dates are calendar days: parse them as local dates, not UTC midnight.
+function parseDate(s) {
+  if (!s) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s);
+  const d = m ? new Date(+m[1], +m[2] - 1, +m[3]) : new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
 
 function formatDateBadge(t) {
-  const dStr = t.due_date || t.created_at;
-  if (!dStr) {
-    return <span className="text-[12px] text-muted-foreground">---</span>;
-  }
-  const d = new Date(dStr);
-  if (isNaN(d.getTime())) {
+  const d = parseDate(t.due_date || t.created_at);
+  if (!d) {
     return <span className="text-[12px] text-muted-foreground">---</span>;
   }
 
@@ -56,17 +64,18 @@ function formatDateBadge(t) {
       </Badge>
     );
   }
-  if (isYesterday) {
-    return (
-      <Badge variant="outline" className="bg-amber-500/10 text-amber-600 border-amber-200 dark:border-amber-800 text-[11px] font-medium shrink-0">
-        Yesterday
-      </Badge>
-    );
-  }
+  // An open task due yesterday is overdue (red); "Yesterday" is only for done/undated items.
   if (isOverdue) {
     return (
       <Badge variant="destructive" className="text-[11px] font-medium shrink-0">
         Overdue · {d.toLocaleDateString("en-IN", { day: "numeric", month: "short" })}
+      </Badge>
+    );
+  }
+  if (isYesterday) {
+    return (
+      <Badge variant="outline" className="bg-amber-500/10 text-amber-600 border-amber-200 dark:border-amber-800 text-[11px] font-medium shrink-0">
+        Yesterday
       </Badge>
     );
   }
@@ -98,22 +107,47 @@ function getLinkLabel(url) {
   return "Reference";
 }
 
-function PdfChip({ url, name }) {
-  if (!url) return null;
+// Attachments are metadata ({id, name, ...}); content is fetched with auth from /tasks/:id/files/:fileId.
+// Legacy external links carry a `url` instead and open directly.
+function PdfChip({ taskId, att, onRemove }) {
+  if (!att) return null;
+  const meta = typeof att === "string" ? { url: att } : att;
+  const name = meta.name || "Document.pdf";
+
+  async function openFile(e) {
+    e.stopPropagation();
+    if (meta.url) {
+      window.open(meta.url.startsWith("http") ? meta.url : `https://${meta.url}`, "_blank", "noopener,noreferrer");
+      return;
+    }
+    try {
+      const { data } = await api.get(`/tasks/${taskId}/files/${meta.id}`, { responseType: "blob" });
+      const href = URL.createObjectURL(data);
+      const a = document.createElement("a");
+      a.href = href;
+      a.download = name;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(href), 10000);
+    } catch (err) {
+      toast.error(formatApiError(err));
+    }
+  }
+
   return (
-    <a
-      href={url}
-      download={name || "Document.pdf"}
-      target="_blank"
-      rel="noreferrer"
-      onClick={(e) => e.stopPropagation()}
-      className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-red-500/10 hover:bg-red-500/20 text-red-600 border border-red-200 dark:border-red-900/40 text-[11px] font-medium transition-colors"
-      title="Click to view/download PDF"
-    >
-      <FileText className="h-3.5 w-3.5 text-red-500" />
-      <span className="truncate max-w-[180px]">{name || "Document.pdf"}</span>
-      <Download className="h-3 w-3 ml-0.5 opacity-70" />
-    </a>
+    <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-red-500/10 hover:bg-red-500/20 text-red-600 border border-red-200 dark:border-red-900/40 text-[11px] font-medium transition-colors">
+      <button type="button" onClick={openFile} className="inline-flex items-center gap-1.5" title="Click to view/download PDF">
+        <FileText className="h-3.5 w-3.5 text-red-500" />
+        <span className="truncate max-w-[180px]">{name}</span>
+        <Download className="h-3 w-3 ml-0.5 opacity-70" />
+      </button>
+      {onRemove && (
+        <button type="button" onClick={(e) => { e.stopPropagation(); onRemove(meta); }} className="opacity-60 hover:opacity-100" title="Remove attachment" data-testid={`task-attachment-remove-${meta.id}`}>
+          <X className="h-3 w-3" />
+        </button>
+      )}
+    </span>
   );
 }
 
@@ -170,7 +204,7 @@ function TaskCard({ task, onOpen }) {
           {task.due_date && (
             <>
               <Clock className="h-3 w-3" />
-              <span>{new Date(task.due_date).toLocaleDateString("en-IN", { day: "numeric", month: "short" })}</span>
+              <span>{parseDate(task.due_date)?.toLocaleDateString("en-IN", { day: "numeric", month: "short" })}</span>
             </>
           )}
         </div>
@@ -191,7 +225,8 @@ function Column({ status, tasks, onOpen, onStatusChange, onNew, canCreate }) {
       onDragOver={(e) => e.preventDefault()}
       onDrop={(e) => {
         const id = e.dataTransfer.getData("text/task-id");
-        if (id) onStatusChange(id, status);
+        // Dropping a card back into its own column is not a status change.
+        if (id && !tasks.some(t => t.id === id)) onStatusChange(id, status);
       }}
       className="min-w-[260px] w-[280px] shrink-0 rounded-xl bg-muted/40 border border-border p-3 flex flex-col"
       data-testid={`kanban-column-${status}`}
@@ -219,6 +254,11 @@ export default function TaskBoard() {
   const canCreate = can("task.create");
   const canDelete = can("task.delete");
   const canAssign = can("task.assign");
+  const canEditAny = can("task.edit_any");
+  // Interns may only move their tasks between statuses; everyone else edits the tasks they can see.
+  const canEditFields = can("task.edit_own") && role !== "Intern";
+  const { user: me } = useAuth();
+  const canRemoveFile = (att) => canEditAny || (!!me && att?.uploaded_by === me.id);
   const taskTitle = role === "Employee" ? "My Tasks" : role === "Intern" ? "Assigned Tasks" : "Task Board";
   const taskDesc = role === "Employee" || role === "Intern"
     ? "Your tasks — track progress, add PDF attachments & comments, and move across statuses."
@@ -231,8 +271,10 @@ export default function TaskBoard() {
   const [open, setOpen] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
   const [activeTask, setActiveTask] = useState(null);
-  const [form, setForm] = useState({ title: "", description: "", status: "todo", priority: "medium", module: "General", attachments: [], link: "" });
+  const [form, setForm] = useState(EMPTY_FORM);
   const [submitting, setSubmitting] = useState(false);
+  const [editMode, setEditMode] = useState(false);
+  const [editForm, setEditForm] = useState(null);
   const [actionLoadingId, setActionLoadingId] = useState(null);
 
   const [comment, setComment] = useState("");
@@ -244,34 +286,91 @@ export default function TaskBoard() {
   const taskFileInputRef = useRef(null);
   const detailFileInputRef = useRef(null);
 
-  async function load() {
+  async function load({ background = false } = {}) {
     try {
       const [{ data: t }, { data: u }, { data: s }] = await Promise.all([
         api.get("/tasks?limit=300"),
-        api.get("/users").catch(() => ({ data: [] })),
+        api.get("/users/directory").catch(() => ({ data: [] })),
         api.get("/tasks/stats/overview").catch(() => ({ data: null })),
       ]);
       setTasks(t || []); setUsers(u || []); setStats(s || null);
     } catch (e) {
-      toast.error(formatApiError(e));
+      if (!background) toast.error(formatApiError(e));
     }
   }
-
   const [searchParams, setSearchParams] = useSearchParams();
+  useLiveRefresh(load, 60000);
 
-  useEffect(() => { load(); }, []);
+useEffect(() => {
+  load();
+}, []);
 
-  useEffect(() => {
-    if (searchParams.get("create") === "task" || searchParams.get("action") === "create-task") {
-      setForm({ title: "", description: "", status: "todo", priority: "medium", module: "General", attachments: [], link: "" });
+useEffect(() => {
+  if (
+    searchParams.get("create") === "task" ||
+    searchParams.get("action") === "create-task"
+  ) {
+    // Only roles that may create tasks get the dialog; the deep link is dropped otherwise.
+    if (canCreate) {
+      setForm(EMPTY_FORM);
       setOpen(true);
-      setSearchParams(params => {
+    }
+
+    setSearchParams(
+      (params) => {
         params.delete("create");
         params.delete("action");
         return params;
-      }, { replace: true });
+      },
+      { replace: true }
+    );
+  }
+}, [searchParams, setSearchParams, canCreate]);
+
+/*
+ * Open a task directly when coming from a notification.
+ *
+ * Example notification link:
+ * /task-board?task_id=68c123abc...
+ *
+ * This uses the SAME Task Details dialog that is already
+ * used when clicking a task card.
+ */
+useEffect(() => {
+  
+  const taskId = searchParams.get("task_id");
+
+  if (!taskId) return;
+
+  async function openNotificationTask() {
+    try {
+      // Fetch the exact task from the backend
+      const { data } = await api.get(`/tasks/${taskId}`);
+
+      // Open the existing Task Details dialog
+      setActiveTask(data);
+      setCommentPdf(null);
+      setEditingLink(false);
+      setEditMode(false);
+      setLinkInput(data.link || "");
+      setDetailOpen(true);
+    } catch (error) {
+      console.error("Failed to open notification task:", error);
+      toast.error(formatApiError(error) || "Could not open this task.");
+    } finally {
+      // Remove task_id from the URL (also on failure) so it is not retried on every URL change.
+      setSearchParams(
+        (params) => {
+          params.delete("task_id");
+          return params;
+        },
+        { replace: true }
+      );
     }
-  }, [searchParams]);
+  }
+
+  openNotificationTask();
+}, [searchParams, setSearchParams]);
 
   const [sortBy, setSortBy] = useState("current-first");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -287,7 +386,8 @@ export default function TaskBoard() {
     let list = tasks;
     if (q) {
       const t = q.toLowerCase();
-      list = list.filter(x => JSON.stringify(x).toLowerCase().includes(t));
+      list = list.filter(x => [x.title, x.description, x.assignee_name, x.module]
+        .some(v => (v || "").toLowerCase().includes(t)));
     }
     if (statusFilter !== "all") {
       list = list.filter(x => x.status === statusFilter);
@@ -298,15 +398,11 @@ export default function TaskBoard() {
 
     const now = new Date();
     const isDateToday = (dStr) => {
-      if (!dStr) return false;
-      const d = new Date(dStr);
-      return !isNaN(d.getTime()) && d.toDateString() === now.toDateString();
+      const d = parseDate(dStr);
+      return !!d && d.toDateString() === now.toDateString();
     };
 
-    const getTaskTime = (t) => {
-      const d = t.due_date || t.created_at;
-      return d ? new Date(d).getTime() : 0;
-    };
+    const getTaskTime = (t) => parseDate(t.due_date || t.created_at)?.getTime() || 0;
 
     return [...list].sort((a, b) => {
       if (sortBy === "current-first") {
@@ -322,8 +418,8 @@ export default function TaskBoard() {
         return getTaskTime(a) - getTaskTime(b);
       }
       if (sortBy === "due-urgent") {
-        const dueA = a.due_date ? new Date(a.due_date).getTime() : Infinity;
-        const dueB = b.due_date ? new Date(b.due_date).getTime() : Infinity;
+        const dueA = parseDate(a.due_date)?.getTime() ?? Infinity;
+        const dueB = parseDate(b.due_date)?.getTime() ?? Infinity;
         return dueA - dueB;
       }
       if (sortBy === "priority-desc") {
@@ -346,6 +442,8 @@ export default function TaskBoard() {
   function handleFileSelect(e, callback) {
     const file = e.target.files?.[0];
     if (!file) return;
+    // Reset right away so picking the same file again (e.g. after a rejection) still fires onChange.
+    e.target.value = "";
     if (!file.name.toLowerCase().endsWith(".pdf") && file.type !== "application/pdf") {
       toast.error("Please select a valid PDF file (.pdf)");
       return;
@@ -360,18 +458,43 @@ export default function TaskBoard() {
         url: event.target.result,
         name: file.name,
       });
-      e.target.value = "";
     };
     reader.readAsDataURL(file);
   }
 
+  // Upload one picked PDF ({url: dataUrl, name}) to the task, or to a comment of it.
+  function uploadFile(taskId, pdfObj, commentId = null) {
+    return api.post(`/tasks/${taskId}/files`, {
+      name: pdfObj.name,
+      content_type: "application/pdf",
+      data: pdfObj.url,
+      comment_id: commentId,
+    });
+  }
+
+  async function refreshActive(id) {
+    const { data } = await api.get(`/tasks/${id}`);
+    setActiveTask(data);
+    return data;
+  }
+
   async function createTask() {
+    if (!form.title?.trim()) {
+      toast.error("Please enter a task title");
+      return;
+    }
     setSubmitting(true);
     try {
-      await api.post("/tasks", form);
-      toast.success("Task created");
+      const { attachments, ...rest } = form;
+      const { data: created } = await api.post("/tasks", { ...rest, title: rest.title.trim(), assignee_id: rest.assignee_id || null });
+      let failed = 0;
+      for (const pdf of attachments || []) {
+        try { await uploadFile(created.id, pdf); } catch { failed += 1; }
+      }
+      if (failed) toast.error(`Task created, but ${failed} PDF(s) could not be uploaded`);
+      else toast.success("Task created");
       setOpen(false);
-      setForm({ title: "", description: "", status: "todo", priority: "medium", module: "General", attachments: [], link: "" });
+      setForm(EMPTY_FORM);
       load();
     } catch (e) {
       toast.error(formatApiError(e));
@@ -397,6 +520,7 @@ export default function TaskBoard() {
     setActiveTask(t);
     setCommentPdf(null);
     setEditingLink(false);
+    setEditMode(false);
     setLinkInput(t.link || "");
     setDetailOpen(true);
     try {
@@ -406,13 +530,52 @@ export default function TaskBoard() {
     } catch { /* noop */ }
   }
 
+  function startEdit() {
+    setEditForm({
+      title: activeTask.title || "",
+      description: activeTask.description || "",
+      priority: activeTask.priority || "medium",
+      module: activeTask.module || "General",
+      due_date: activeTask.due_date || "",
+      assignee_id: activeTask.assignee_id || "",
+    });
+    setEditMode(true);
+  }
+
+  async function saveEdit() {
+    if (!activeTask || !editForm) return;
+    if (!editForm.title.trim()) {
+      toast.error("Please enter a task title");
+      return;
+    }
+    // Send only what changed; the assignee only when the caller may reassign.
+    const next = { ...editForm, title: editForm.title.trim(), due_date: editForm.due_date || null, assignee_id: editForm.assignee_id || null };
+    if (!canAssign) delete next.assignee_id;
+    const payload = Object.fromEntries(Object.entries(next).filter(([k, v]) => (activeTask[k] ?? null) !== v && !(k === "description" && !activeTask[k] && !v)));
+    if (Object.keys(payload).length === 0) {
+      setEditMode(false);
+      return;
+    }
+    setActionLoadingId(`edit-${activeTask.id}`);
+    try {
+      await api.patch(`/tasks/${activeTask.id}`, payload);
+      await refreshActive(activeTask.id);
+      setEditMode(false);
+      load();
+      toast.success("Task updated");
+    } catch (e) {
+      toast.error(formatApiError(e));
+    } finally {
+      setActionLoadingId(null);
+    }
+  }
+
   async function saveTaskLink() {
     if (!activeTask) return;
     setActionLoadingId(`link-${activeTask.id}`);
     try {
       await api.patch(`/tasks/${activeTask.id}`, { link: linkInput.trim() });
-      const { data } = await api.get(`/tasks/${activeTask.id}`);
-      setActiveTask(data);
+      await refreshActive(activeTask.id);
       setEditingLink(false);
       load();
       toast.success("Reference link saved");
@@ -429,16 +592,19 @@ export default function TaskBoard() {
     try {
       const payload = {
         body: comment.trim() || (commentPdf ? `Attached document: ${commentPdf.name}` : ""),
-        attachments: commentPdf ? [commentPdf.url] : [],
         attachment_name: commentPdf ? commentPdf.name : null,
       };
-      await api.post(`/tasks/${activeTask.id}/comments`, payload);
+      const { data: created } = await api.post(`/tasks/${activeTask.id}/comments`, payload);
+      let uploadError = null;
+      if (commentPdf) {
+        try { await uploadFile(activeTask.id, commentPdf, created.id); } catch (err) { uploadError = err; }
+      }
       setComment("");
       setCommentPdf(null);
-      const { data } = await api.get(`/tasks/${activeTask.id}`);
-      setActiveTask(data);
+      await refreshActive(activeTask.id);
       load();
-      toast.success("Comment added");
+      if (uploadError) toast.error(`Comment added, but the PDF failed: ${formatApiError(uploadError)}`);
+      else toast.success("Comment added");
     } catch (e) {
       toast.error(formatApiError(e));
     } finally {
@@ -450,13 +616,25 @@ export default function TaskBoard() {
     if (!activeTask) return;
     setActionLoadingId(`pdf-${activeTask.id}`);
     try {
-      const currentAttachments = activeTask.attachments || [];
-      const updatedAttachments = [...currentAttachments, pdfObj.url];
-      await api.patch(`/tasks/${activeTask.id}`, { attachments: updatedAttachments });
-      const { data } = await api.get(`/tasks/${activeTask.id}`);
-      setActiveTask(data);
+      await uploadFile(activeTask.id, pdfObj);
+      await refreshActive(activeTask.id);
       load();
       toast.success("PDF document attached to task");
+    } catch (e) {
+      toast.error(formatApiError(e));
+    } finally {
+      setActionLoadingId(null);
+    }
+  }
+
+  async function removeAttachment(att) {
+    if (!activeTask || !confirm(`Remove ${att.name || "this attachment"}?`)) return;
+    setActionLoadingId(`pdf-${activeTask.id}`);
+    try {
+      await api.delete(`/tasks/${activeTask.id}/files/${att.id}`);
+      await refreshActive(activeTask.id);
+      load();
+      toast.success("Attachment removed");
     } catch (e) {
       toast.error(formatApiError(e));
     } finally {
@@ -479,7 +657,12 @@ export default function TaskBoard() {
     }
   }
 
-  const userOpts = users.map(u => ({ value: u.id, label: u.name }));
+  // Assignee choices mirror the server rules: Founder/Admin pick anyone, Managers stay in their
+  // department, everyone else may only take a task themselves.
+  const userOpts = (canAssign
+    ? users.filter(u => role !== "Manager" || u.id === me?.id || (me?.department && u.department === me.department))
+    : users.filter(u => u.id === me?.id)
+  ).map(u => ({ value: u.id, label: u.id === me?.id ? `${u.name} (me)` : u.name }));
 
   return (
     <div data-testid="taskboard-page" className="space-y-6">
@@ -488,7 +671,7 @@ export default function TaskBoard() {
         title={taskTitle}
         description={taskDesc}
         actions={canCreate && (
-          <Button onClick={() => { setForm({ title: "", description: "", status: "todo", priority: "medium", module: "General", attachments: [], link: "" }); setOpen(true); }} data-testid="task-create-btn">
+          <Button onClick={() => { setForm(EMPTY_FORM); setOpen(true); }} data-testid="task-create-btn">
             <Plus className="h-4 w-4 mr-1.5" /> New task
           </Button>
         )}
@@ -646,7 +829,7 @@ export default function TaskBoard() {
                 tasks={byStatus[s] || []}
                 onOpen={openDetail}
                 onStatusChange={setStatus}
-                onNew={(status) => { setForm(f => ({ ...f, status })); setOpen(true); }}
+                onNew={(status) => { setForm({ ...EMPTY_FORM, status }); setOpen(true); }}
                 canCreate={canCreate}
               />
             ))}
@@ -664,8 +847,8 @@ export default function TaskBoard() {
                   {filtered.filter(t => t.due_date).sort((a, b) => (a.due_date || "").localeCompare(b.due_date || "")).map(t => (
                     <li key={t.id} onClick={() => openDetail(t)} className="flex items-center gap-3 p-3 rounded-md border border-border hover:border-primary/40 cursor-pointer">
                       <div className="h-10 w-10 rounded-md bg-primary/10 text-primary flex flex-col items-center justify-center text-[10px] uppercase font-semibold">
-                        <div>{new Date(t.due_date).toLocaleDateString("en-IN", { month: "short" })}</div>
-                        <div className="text-[14px] font-bold leading-none">{new Date(t.due_date).getDate()}</div>
+                        <div>{parseDate(t.due_date)?.toLocaleDateString("en-IN", { month: "short" })}</div>
+                        <div className="text-[14px] font-bold leading-none">{parseDate(t.due_date)?.getDate()}</div>
                       </div>
                       <div className="flex-1 min-w-0">
                         <div className="text-[13.5px] font-medium flex items-center gap-2">
@@ -690,7 +873,7 @@ export default function TaskBoard() {
 
       {/* Create Task Dialog */}
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-xl">
+        <DialogContent className="max-w-xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="font-display">New task</DialogTitle>
             <DialogDescription>Add a task, attach PDF documents, and assign to a team member.</DialogDescription>
@@ -710,7 +893,7 @@ export default function TaskBoard() {
                 <Label>Priority</Label>
                 <Select value={form.priority} onValueChange={(v) => setForm(s => ({ ...s, priority: v }))}>
                   <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
-                  <SelectContent>{["low","medium","high","urgent"].map(p => <SelectItem key={p} value={p} className="capitalize">{p}</SelectItem>)}</SelectContent>
+                  <SelectContent>{PRIORITIES.map(p => <SelectItem key={p} value={p} className="capitalize">{p}</SelectItem>)}</SelectContent>
                 </Select>
               </div>
             </div>
@@ -718,15 +901,16 @@ export default function TaskBoard() {
               <div>
                 <Label>Module</Label><Input className="mt-1" value={form.module} onChange={(e) => setForm(s => ({ ...s, module: e.target.value }))} />
               </div>
-              {canAssign && (
-                <div>
-                  <Label>Assignee</Label>
-                  <Select value={form.assignee_id || ""} onValueChange={(v) => setForm(s => ({ ...s, assignee_id: v }))}>
-                    <SelectTrigger className="mt-1"><SelectValue placeholder="Select teammate" /></SelectTrigger>
-                    <SelectContent>{userOpts.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}</SelectContent>
-                  </Select>
-                </div>
-              )}
+              <div>
+                <Label>Assignee</Label>
+                <Select value={form.assignee_id || "__none"} onValueChange={(v) => setForm(s => ({ ...s, assignee_id: v === "__none" ? "" : v }))}>
+                  <SelectTrigger className="mt-1" data-testid="task-assignee-select"><SelectValue placeholder="Select teammate" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none">Unassigned</SelectItem>
+                    {userOpts.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
             <div><Label>Due date</Label><Input type="date" className="mt-1" value={form.due_date || ""} onChange={(e) => setForm(s => ({ ...s, due_date: e.target.value }))} /></div>
 
@@ -753,7 +937,8 @@ export default function TaskBoard() {
                 accept=".pdf,application/pdf"
                 className="hidden"
                 onChange={(e) => handleFileSelect(e, (pdfObj) => {
-                  setForm(s => ({ ...s, attachments: [...(s.attachments || []), pdfObj.url] }));
+                  // Kept locally and uploaded once the task exists.
+                  setForm(s => ({ ...s, attachments: [...(s.attachments || []), pdfObj] }));
                   toast.success(`Attached PDF: ${pdfObj.name}`);
                 })}
               />
@@ -785,7 +970,7 @@ export default function TaskBoard() {
 
       {/* Task Detail Dialog */}
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           {activeTask && (
             <>
               <DialogHeader>
@@ -800,7 +985,7 @@ export default function TaskBoard() {
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">Status</div>
-                    <Select value={activeTask.status} onValueChange={(v) => setStatus(activeTask.id, v).then(() => openDetail({ ...activeTask, status: v }))} disabled={actionLoadingId === `status-${activeTask.id}`}>
+                    <Select value={activeTask.status} onValueChange={(v) => setStatus(activeTask.id, v).then(() => refreshActive(activeTask.id)).catch(() => {})} disabled={actionLoadingId === `status-${activeTask.id}`}>
                       <SelectTrigger className="mt-1.5"><SelectValue /></SelectTrigger>
                       <SelectContent>{STATUS_ORDER.map(s => <SelectItem key={s} value={s}>{STATUS_LABEL[s]}</SelectItem>)}</SelectContent>
                     </Select>
@@ -818,10 +1003,78 @@ export default function TaskBoard() {
                   </div>
                 </div>
 
-                {activeTask.description && (
-                  <div>
-                    <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">Description</div>
-                    <p className="text-[13.5px] text-foreground mt-1.5 leading-relaxed">{activeTask.description}</p>
+                {editMode && editForm ? (
+                  <div className="space-y-3 border-t border-border pt-3" data-testid="task-edit-form">
+                    <div><Label>Title</Label><Input className="mt-1" value={editForm.title} onChange={(e) => setEditForm(s => ({ ...s, title: e.target.value }))} data-testid="task-edit-title-input" /></div>
+                    <div><Label>Description</Label><Textarea rows={3} className="mt-1" value={editForm.description} onChange={(e) => setEditForm(s => ({ ...s, description: e.target.value }))} /></div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div>
+                        <Label>Priority</Label>
+                        <Select value={editForm.priority} onValueChange={(v) => setEditForm(s => ({ ...s, priority: v }))}>
+                          <SelectTrigger className="mt-1"><SelectValue /></SelectTrigger>
+                          <SelectContent>{PRIORITIES.map(p => <SelectItem key={p} value={p} className="capitalize">{p}</SelectItem>)}</SelectContent>
+                        </Select>
+                      </div>
+                      <div><Label>Module</Label><Input className="mt-1" value={editForm.module} onChange={(e) => setEditForm(s => ({ ...s, module: e.target.value }))} /></div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div><Label>Due date</Label><Input type="date" className="mt-1" value={editForm.due_date || ""} onChange={(e) => setEditForm(s => ({ ...s, due_date: e.target.value }))} /></div>
+                      {canAssign && (
+                        <div>
+                          <Label>Assignee</Label>
+                          <Select value={editForm.assignee_id || "__none"} onValueChange={(v) => setEditForm(s => ({ ...s, assignee_id: v === "__none" ? "" : v }))}>
+                            <SelectTrigger className="mt-1"><SelectValue placeholder="Select teammate" /></SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="__none">Unassigned</SelectItem>
+                              {userOpts.map(o => <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>)}
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex justify-end gap-2">
+                      <Button size="sm" variant="outline" onClick={() => setEditMode(false)} disabled={actionLoadingId === `edit-${activeTask.id}`}>Cancel</Button>
+                      <Button size="sm" onClick={saveEdit} disabled={actionLoadingId === `edit-${activeTask.id}`} data-testid="task-edit-save-btn">
+                        {actionLoadingId === `edit-${activeTask.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : null}
+                        Save changes
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {activeTask.description && (
+                      <div>
+                        <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">Description</div>
+                        <p className="text-[13.5px] text-foreground mt-1.5 leading-relaxed">{activeTask.description}</p>
+                      </div>
+                    )}
+                    {activeTask.due_date && (
+                      <div className="text-[12px] text-muted-foreground flex items-center gap-1.5">
+                        <Clock className="h-3.5 w-3.5" /> Due {parseDate(activeTask.due_date)?.toLocaleDateString("en-IN", { day: "numeric", month: "short", year: "numeric" })}
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {(activeTask.subtasks?.length > 0 || activeTask.tags?.length > 0) && (
+                  <div className="space-y-2">
+                    {activeTask.tags?.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5">
+                        {activeTask.tags.map(tag => <Badge key={tag} variant="outline" className="text-[10px] font-normal">{tag}</Badge>)}
+                      </div>
+                    )}
+                    {activeTask.subtasks?.length > 0 && (
+                      <div>
+                        <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">Subtasks · {activeTask.subtasks.filter(s => s.done).length}/{activeTask.subtasks.length}</div>
+                        <ul className="mt-1.5 space-y-1">
+                          {activeTask.subtasks.map((s, i) => (
+                            <li key={i} className={`text-[12.5px] flex items-center gap-1.5 ${s.done ? "line-through text-muted-foreground" : "text-foreground"}`}>
+                              <CheckCircle2 className={`h-3.5 w-3.5 ${s.done ? "text-success" : "text-muted-foreground/40"}`} /> {s.title}
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -831,7 +1084,7 @@ export default function TaskBoard() {
                     <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground flex items-center gap-1.5">
                       <LinkIcon className="h-3.5 w-3.5 text-primary" /> Reference Link (GitHub / LinkedIn)
                     </div>
-                    {!editingLink && (
+                    {!editingLink && canEditFields && (
                       <Button
                         type="button"
                         variant="ghost"
@@ -885,32 +1138,36 @@ export default function TaskBoard() {
                     <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground flex items-center gap-1.5">
                       <FileText className="h-3.5 w-3.5 text-red-500" /> Attached PDF Documents · {(activeTask.attachments || []).length}
                     </div>
-                    <input
-                      type="file"
-                      ref={detailFileInputRef}
-                      accept=".pdf,application/pdf"
-                      className="hidden"
-                      onChange={(e) => handleFileSelect(e, (pdfObj) => addPdfToActiveTask(pdfObj))}
-                    />
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      className="h-7 text-xs gap-1 text-primary"
-                      onClick={() => detailFileInputRef.current?.click()}
-                      disabled={actionLoadingId === `pdf-${activeTask.id}`}
-                    >
-                      {actionLoadingId === `pdf-${activeTask.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Plus className="h-3.5 w-3.5" />}
-                      Attach PDF
-                    </Button>
+                    {canEditFields && (
+                      <>
+                        <input
+                          type="file"
+                          ref={detailFileInputRef}
+                          accept=".pdf,application/pdf"
+                          className="hidden"
+                          onChange={(e) => handleFileSelect(e, (pdfObj) => addPdfToActiveTask(pdfObj))}
+                        />
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 text-xs gap-1 text-primary"
+                          onClick={() => detailFileInputRef.current?.click()}
+                          disabled={actionLoadingId === `pdf-${activeTask.id}`}
+                        >
+                          {actionLoadingId === `pdf-${activeTask.id}` ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1" /> : <Plus className="h-3.5 w-3.5" />}
+                          Attach PDF
+                        </Button>
+                      </>
+                    )}
                   </div>
 
                   <div className="mt-2.5 flex flex-wrap gap-2">
                     {(activeTask.attachments || []).length === 0 ? (
                       <span className="text-xs text-muted-foreground italic">No PDF documents attached yet.</span>
                     ) : (
-                      activeTask.attachments.map((pdfUrl, idx) => (
-                        <PdfChip key={idx} url={pdfUrl} name={`Task_Document_${idx + 1}.pdf`} />
+                      activeTask.attachments.map((att, idx) => (
+                        <PdfChip key={att.id || idx} taskId={activeTask.id} att={att} onRemove={canRemoveFile(att) ? removeAttachment : null} />
                       ))
                     )}
                   </div>
@@ -924,23 +1181,23 @@ export default function TaskBoard() {
                   <div className="mt-2 space-y-2 max-h-[220px] overflow-y-auto scrollbar-thin">
                     {(activeTask.comments || []).map(c => (
                       <div key={c.id} className="p-3 rounded-md bg-muted/40 border border-border space-y-1.5">
-                        <div className="flex items-center justify-between">
+                        <div className="flex items-center justify-between gap-2">
                           <div className="text-[12px] font-semibold text-foreground">{c.author_name}</div>
                           {c.created_at && (
                             <span className="text-[10px] text-muted-foreground">
-                              {new Date(c.created_at).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit" })}
+                              {new Date(c.created_at).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}
                             </span>
                           )}
                         </div>
-                        <div className="text-[13px] text-foreground">{c.body}</div>
+                        <div className="text-[13px] text-foreground break-words whitespace-pre-wrap">{c.body}</div>
 
                         {/* Comment Attachments */}
                         {(c.attachments?.length > 0 || c.attachment_name) && (
                           <div className="pt-1 flex flex-wrap gap-1.5">
-                            {c.attachments?.map((attUrl, i) => (
-                              <PdfChip key={i} url={attUrl} name={c.attachment_name || `Comment_Attachment_${i+1}.pdf`} />
-                            )) || (
-                              c.attachment_name && <Badge variant="outline" className="text-[10px] gap-1"><FileText className="h-3 w-3 text-red-500" /> {c.attachment_name}</Badge>
+                            {c.attachments?.length > 0 ? c.attachments.map((att, i) => (
+                              <PdfChip key={att.id || i} taskId={activeTask.id} att={att} onRemove={canRemoveFile(att) ? removeAttachment : null} />
+                            )) : (
+                              <Badge variant="outline" className="text-[10px] gap-1"><FileText className="h-3 w-3 text-red-500" /> {c.attachment_name}</Badge>
                             )}
                           </div>
                         )}
@@ -1004,6 +1261,9 @@ export default function TaskBoard() {
                     {actionLoadingId === `del-${activeTask.id}` ? <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> : <Trash2 className="h-4 w-4 mr-1.5" />}
                     Delete
                   </Button>
+                )}
+                {canEditFields && !editMode && (
+                  <Button variant="outline" onClick={startEdit} data-testid="task-edit-btn">Edit</Button>
                 )}
                 <Button onClick={() => setDetailOpen(false)}>Close</Button>
               </DialogFooter>

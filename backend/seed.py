@@ -11,35 +11,33 @@ from auth_utils import hash_password
 
 
 ROLE_ACCOUNTS = [
-    # Real founder account uses env-provided credentials.
+    # The founder account is created from env-provided credentials (FOUNDER_*) on first start only.
     {"role": "Founder", "email_env": "FOUNDER_EMAIL", "password_env": "FOUNDER_PASSWORD",
      "name_env": "FOUNDER_NAME", "designation": "Founder & CEO", "department": "Executive"},
 ]
 
 
 async def _ensure_user(db, email: str, password: str, name: str, role: str, designation: str, department: str) -> str:
+    """Create the account on first start only. An existing account is left untouched, so a
+    password or profile the user changed in the app survives restarts."""
     existing = await db.users.find_one({"role": "Founder"}) if role == "Founder" else await db.users.find_one({"email": email})
-    doc = {
+    if existing is not None:
+        return str(existing["_id"])
+    now = utc_now().isoformat()
+    res = await db.users.insert_one({
         "email": email,
         "name": name,
         "role": role,
         "designation": designation,
         "department": department,
-        "online": role == "Founder",
-        "updated_at": utc_now().isoformat(),
-    }
-    if existing is None:
-        doc["password_hash"] = hash_password(password)
-        doc["created_at"] = utc_now().isoformat()
-        res = await db.users.insert_one(doc)
-        return str(res.inserted_id)
-    # Update password if changed, keep other fields fresh
-    updates = dict(doc)
-    from auth_utils import verify_password
-    if not verify_password(password, existing.get("password_hash", "")):
-        updates["password_hash"] = hash_password(password)
-    await db.users.update_one({"_id": existing["_id"]}, {"$set": updates})
-    return str(existing["_id"])
+        "password_hash": hash_password(password),
+        "online": False,
+        "status": "active",
+        "is_active": True,
+        "created_at": now,
+        "updated_at": now,
+    })
+    return str(res.inserted_id)
 
 
 async def seed_all():

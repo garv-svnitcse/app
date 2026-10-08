@@ -156,3 +156,18 @@
 @layer base {
   [data-debug-wrapper="true"] { display: contents !important; }
 }
+
+/* Calendar sidebar: a dot under mini-calendar days that have events. */
+.calendar-busy-day { position: relative; }
+.calendar-busy-day::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  bottom: 3px;
+  width: 4px;
+  height: 4px;
+  border-radius: 9999px;
+  transform: translateX(-50%);
+  background: hsl(var(--primary));
+  opacity: 0.7;
+}

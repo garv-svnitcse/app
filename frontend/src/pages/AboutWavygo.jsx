@@ -1,11 +1,20 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { api } from "@/lib/api";
 import { WavygoLogo } from "@/components/WavygoLogo";
 
 export default function AboutWavygo() {
   const [company, setCompany] = useState(null);
-  useEffect(() => { api.get("/settings/company").then(({ data }) => setCompany(data)); }, []);
+  const [error, setError] = useState(null);
+
+  const load = useCallback(() => {
+    setError(null);
+    api.get("/settings/company")
+      .then(({ data }) => setCompany(data))
+      .catch((e) => setError(e?.response?.data?.detail || "Could not load company details."));
+  }, []);
+  useEffect(() => { load(); }, [load]);
 
   return (
     <div className="space-y-6 max-w-4xl">
@@ -35,6 +44,11 @@ export default function AboutWavygo() {
                 </div>
               ))}
             </dl>
+          ) : error ? (
+            <div className="text-sm text-muted-foreground" data-testid="about-error">
+              {String(error)}
+              <Button variant="outline" size="sm" onClick={load} className="ml-3 h-7 text-xs">Retry</Button>
+            </div>
           ) : <div className="text-sm text-muted-foreground">Loading…</div>}
         </CardContent>
       </Card>

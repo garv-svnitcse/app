@@ -16,6 +16,8 @@ from models import UserPublic
 JWT_ALG = "HS256"
 ACCESS_MIN = 60 * 12   # 12h
 REFRESH_DAYS = 30
+REFRESH_DAYS_SHORT = 1  # login without "remember me"
+PRESENCE_TIMEOUT = timedelta(minutes=5)  # no requests for this long = shown as offline
 
 
 def _secret() -> str:
@@ -33,7 +35,7 @@ def verify_password(pw: str, hashed: str) -> bool:
         return False
 
 
-def create_access_token(user_id: str, email: str, role: str) -> str:
+def create_access_token(user_id: str, email: str, role: str, sid: str | None = None) -> str:
     payload = {
         "sub": user_id,
         "email": email,
@@ -42,16 +44,18 @@ def create_access_token(user_id: str, email: str, role: str) -> str:
         "exp": datetime.now(timezone.utc) + timedelta(minutes=ACCESS_MIN),
         "iat": datetime.now(timezone.utc),
     }
+    if sid:
+        payload["sid"] = sid  # login session this token belongs to
     return jwt.encode(payload, _secret(), algorithm=JWT_ALG)
 
 
-def create_refresh_token(user_id: str, jti: str | None = None) -> tuple[str, str]:
+def create_refresh_token(user_id: str, jti: str | None = None, days: int = REFRESH_DAYS) -> tuple[str, str]:
     jti = jti or str(uuid.uuid4())
     payload = {
         "sub": user_id,
         "jti": jti,
         "type": "refresh",
-        "exp": datetime.now(timezone.utc) + timedelta(days=REFRESH_DAYS),
+        "exp": datetime.now(timezone.utc) + timedelta(days=days),
         "iat": datetime.now(timezone.utc),
     }
     return jwt.encode(payload, _secret(), algorithm=JWT_ALG), jti
@@ -62,6 +66,24 @@ def decode_token(token: str) -> dict:
 
 
 bearer = HTTPBearer(auto_error=False)
+
+DEACTIVATED_DETAIL = "Account is deactivated. Please contact your Founder or Admin."
+
+
+def is_deactivated(user_doc: dict) -> bool:
+    return user_doc.get("status") == "deactivated" or user_doc.get("is_active") is False or user_doc.get("active") is False
+
+
+def session_id_from_request(request: Request) -> str | None:
+    """Session id ("sid" claim) of the bearer access token, if present."""
+    auth = request.headers.get("authorization", "")
+    token = auth[7:] if auth.lower().startswith("bearer ") else request.cookies.get("access_token")
+    if not token:
+        return None
+    try:
+        return decode_token(token).get("sid")
+    except jwt.InvalidTokenError:
+        return None
 
 
 async def get_current_user(
@@ -93,8 +115,25 @@ async def get_current_user(
     if not user_doc:
         raise HTTPException(status_code=401, detail="User not found")
 
-    if user_doc.get("status") == "deactivated" or user_doc.get("is_active") is False or user_doc.get("active") is False:
-        raise HTTPException(status_code=403, detail="Account is deactivated. Please contact your Founder or Admin.")
+    # Access tokens name their login session; once it is revoked (logout, password change or reset)
+    # the token stops working immediately instead of living out its 12 hours.
+    sid = payload.get("sid")
+    if sid and ObjectId.is_valid(sid):
+        if await db.sessions.find_one({"_id": ObjectId(sid), "revoked": True}, {"_id": 1}):
+            raise HTTPException(status_code=401, detail="Session expired or revoked")
+
+    if is_deactivated(user_doc):
+        raise HTTPException(status_code=403, detail=DEACTIVATED_DETAIL)
+
+    # Presence: any authenticated request counts as activity. Written at most once a minute;
+    # the server marks users offline after PRESENCE_TIMEOUT without activity.
+    now = datetime.now(timezone.utc)
+    last_seen = user_doc.get("last_seen")
+    if last_seen is not None and last_seen.tzinfo is None:
+        last_seen = last_seen.replace(tzinfo=timezone.utc)
+    if not user_doc.get("online") or last_seen is None or now - last_seen > timedelta(seconds=60):
+        await db.users.update_one({"_id": user_doc["_id"]}, {"$set": {"online": True, "last_seen": now}})
+        user_doc["online"] = True
 
     return UserPublic(
         id=str(user_doc["_id"]),

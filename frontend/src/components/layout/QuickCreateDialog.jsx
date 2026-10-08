@@ -1,20 +1,28 @@
 import { useNavigate } from "react-router-dom";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { Bike, Handshake, ClipboardList, Target, Users, Megaphone, CalendarDays, Archive } from "lucide-react";
+import { Bike, Handshake, ClipboardList, Target, Users, CalendarDays, Megaphone, Archive } from "lucide-react";
+import { usePermission } from "@/hooks/usePermission";
 
 const OPTIONS = [
-  { label: "New Booking",     desc: "Reserve a vehicle for a customer.",  icon: Bike,          to: "/marketplace?tab=bookings&create=booking" },
-  { label: "New Vendor",      desc: "Onboard a fleet partner.",           icon: Handshake,     to: "/marketplace?tab=vendors&create=vendor" },
-  { label: "New Task",        desc: "Assign work to your team.",          icon: ClipboardList, to: "/task-board?create=task" },
-  { label: "New Opportunity", desc: "Track a partnership or deal.",       icon: Target,        to: "/opportunity-hub?create=opportunity" },
-  { label: "Invite Teammate", desc: "Add a user with a role.",            icon: Users,         to: "/employees?create=invite" },
-  { label: "New Campaign",    desc: "Launch a marketing campaign.",       icon: Megaphone,     to: "/marketing?create=campaign" },
-  { label: "New Event",       desc: "Schedule on the company calendar.",  icon: CalendarDays,  to: "/calendar?create=event" },
-  { label: "Upload Document", desc: "Save to the Company Vault.",         icon: Archive,       to: "/company-vault?create=document" },
+  { label: "New Booking",     desc: "Reserve a vehicle for a customer.",  icon: Bike,          to: "/marketplace?tab=bookings&create=booking", module: "marketplace",     action: "marketplace.any" },
+  { label: "New Vendor",      desc: "Onboard a fleet partner.",           icon: Handshake,     to: "/marketplace?tab=vendors&create=vendor",   module: "marketplace",     action: "marketplace.any" },
+  { label: "New Task",        desc: "Assign work to your team.",          icon: ClipboardList, to: "/task-board?create=task",                  module: "task-board",      action: "task.create" },
+  { label: "New Opportunity", desc: "Track a partnership or deal.",       icon: Target,        to: "/opportunity-hub?create=opportunity",      module: "opportunity-hub", action: "opportunity.create" },
+  { label: "Invite Teammate", desc: "Add a user with a role.",            icon: Users,         to: "/employees?create=invite",                 module: "employees",       action: "employee.invite" },
+  { label: "New Event",       desc: "Schedule on the company calendar.",  icon: CalendarDays,  to: "/calendar?create=event",                   module: "calendar",        action: "calendar.create" },
+  { label: "New Campaign",    desc: "Launch a marketing campaign.",       icon: Megaphone,     to: "/marketing?create=campaign",               module: "marketing",       action: "marketing.manage" },
+  { label: "Upload Document", desc: "Save to the Company Vault.",         icon: Archive,       to: "/company-vault?create=document",           module: "company-vault",   action: "vault.manage" },
 ];
+
+/** Create shortcuts the role can actually complete (module visible and action allowed). */
+export function quickCreateOptionsFor(can, canViewModule) {
+  return OPTIONS.filter((o) => canViewModule(o.module) && can(o.action));
+}
 
 export function QuickCreateDialog({ open, onOpenChange }) {
   const navigate = useNavigate();
+  const { can, canViewModule } = usePermission();
+  const options = quickCreateOptionsFor(can, canViewModule);
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-2xl">
@@ -22,8 +30,11 @@ export function QuickCreateDialog({ open, onOpenChange }) {
           <DialogTitle className="font-display text-xl">Quick Create</DialogTitle>
           <DialogDescription>Jump straight into creating something new.</DialogDescription>
         </DialogHeader>
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 pt-2">
-          {OPTIONS.map((o) => {
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 pt-2">
+          {options.length === 0 && (
+            <p className="col-span-full text-sm text-muted-foreground py-6 text-center">Your role can't create items from here.</p>
+          )}
+          {options.map((o) => {
             const Icon = o.icon;
             return (
               <button

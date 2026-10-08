@@ -7,7 +7,7 @@ export const MODULE_ACCESS = {
   "opportunity-hub": new Set(["Founder", "Admin", "Manager", "Employee"]),
   "employees":       new Set(["Founder", "Admin", "Manager", "Employee", "Intern"]),
   "wavygo-connect":  new Set(["Founder", "Admin", "Manager", "Employee", "Intern"]),
-  "company-vault":   new Set(["Founder"]),
+  "company-vault":   new Set(["Founder", "Admin", "Manager", "Employee", "Intern"]),
   "finance":         new Set(["Founder"]),
   "crm":             new Set(["Founder", "Admin", "Manager"]),
   "marketing":       new Set(["Founder", "Admin", "Manager"]),
@@ -37,7 +37,7 @@ export const ACTIONS = {
   "user.invite.manager":         new Set(["Founder", "Admin"]),
   "user.invite.employee":        new Set(["Founder", "Admin"]),
   "user.invite.intern":          new Set(["Founder", "Admin"]),
-  "user.delete":                 new Set(["Founder"]),
+  "user.delete":                 new Set(["Founder", "Admin"]),
   "user.edit_others":            new Set(["Founder", "Admin", "Manager"]),
   "user.edit_self":              new Set(["Founder", "Admin", "Manager", "Employee", "Intern"]),
 
@@ -74,8 +74,30 @@ export const ACTIONS = {
   "connect.post_announcement":   new Set(["Founder", "Admin"]),
   "connect.send_dm":             new Set(["Founder", "Admin", "Manager", "Employee", "Intern"]),
 
+  "calendar.create":             new Set(["Founder", "Admin", "Manager", "Employee"]),
+  "calendar.view_all":           new Set(["Founder", "Admin"]),
+  "calendar.edit_any":           new Set(["Founder", "Admin"]),
+  "calendar.delete_any":         new Set(["Founder", "Admin"]),
+
   "activity.view_all":           new Set(["Founder", "Admin"]),
   "activity.view_team":          new Set(["Manager"]),
+
+  "vault.view":                  new Set(["Founder", "Admin", "Manager", "Employee", "Intern"]),
+  "vault.manage":                new Set(["Founder", "Admin"]),
+
+  "finance.view":                new Set(["Founder"]),
+  "finance.manage":              new Set(["Founder"]),
+
+  "crm.view":                    new Set(["Founder", "Admin", "Manager"]),
+  "crm.edit":                    new Set(["Founder", "Admin", "Manager"]),
+
+  "marketing.view":              new Set(["Founder", "Admin", "Manager"]),
+  "marketing.manage":            new Set(["Founder", "Admin", "Manager"]),
+
+  "analytics.view":              new Set(["Founder", "Admin", "Manager"]),
+  "analytics.export":            new Set(["Founder", "Admin", "Manager"]),
+
+  "ai.use":                      new Set(["Founder", "Admin", "Manager", "Employee", "Intern"]),
 
   "settings.company_edit":       new Set(["Founder"]),
   "settings.roles_view":         new Set(["Founder", "Admin", "Manager", "Employee", "Intern"]),

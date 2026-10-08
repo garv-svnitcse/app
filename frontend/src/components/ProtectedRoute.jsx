@@ -18,7 +18,7 @@ export function ProtectedRoute({ children, allowedModule }) {
       </div>
     );
   }
-  if (!user) return <Navigate to="/login" state={{ from: loc.pathname }} replace />;
+  if (!user) return <Navigate to="/login" state={{ from: loc.pathname + loc.search }} replace />;
   if (allowedModule && !canViewModule(user.role, allowedModule)) return <Forbidden />;
   return children;
 }

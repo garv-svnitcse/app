@@ -14,6 +14,13 @@ from email_utils import (
 from hub_utils import find_user
 
 
+@pytest.fixture(autouse=True)
+def _email_configured(monkeypatch):
+    # email_utils skips sending when Brevo isn't configured; these tests mock the HTTP call.
+    monkeypatch.setenv("BREVO_API_KEY", "test-key")
+    monkeypatch.setenv("BREVO_SENDER_EMAIL", "noreply@test.wavygo.in")
+
+
 def test_send_task_assignment_email_payload():
     with patch("email_utils.requests.post") as mock_post:
         mock_response = MagicMock()
@@ -252,6 +259,8 @@ def test_task_router_create_and_update_dispatches_email():
         mock_db.tasks.insert_one = AsyncMock(return_value=mock_insert_res)
         mock_db.activity_logs.insert_one = AsyncMock()
         mock_db.notifications.insert_one = AsyncMock()
+        # Assignees are looked up to make sure they are active users.
+        mock_db.users.find_one = AsyncMock(return_value={"_id": ObjectId(), "status": "active"})
 
         # Test create_task
         task_payload = TaskIn(
@@ -334,6 +343,8 @@ def test_opp_router_create_and_assign_dispatches_email():
         mock_db.opportunities.insert_one = AsyncMock(return_value=mock_insert_res)
         mock_db.activity_logs.insert_one = AsyncMock()
         mock_db.notifications.insert_one = AsyncMock()
+        # assign_opp now checks the assignee exists.
+        mock_db.users.find_one = AsyncMock(return_value={"_id": ObjectId(emp_id), "name": "Employee"})
 
         opp_payload = OpportunityIn(
             title="Patna Junction EV Tender",
@@ -396,3 +407,74 @@ def test_opp_router_create_and_assign_dispatches_email():
 
     asyncio.run(_test())
 
+
+
+# ------------------------- escaping -------------------------
+
+def _sent_payload(send, **kwargs):
+    with patch("email_utils.requests.post") as mock_post:
+        mock_post.return_value = MagicMock(status_code=201)
+        assert send(**kwargs) is True
+        return mock_post.call_args.kwargs["json"]
+
+
+def test_assignment_email_escapes_user_supplied_html():
+    data = _sent_payload(
+        send_task_assignment_email,
+        recipient_email="employee@wavygo.in",
+        recipient_name="<b>Eve</b>",
+        task_title='Pay invoice <a href="https://evil.example">here</a>',
+        assigned_by="Mallory <script>",
+        task_id="t1",
+    )
+    body = data["htmlContent"]
+    assert "evil.example\">here</a>" not in body
+    assert "&lt;a href=&quot;https://evil.example&quot;&gt;here&lt;/a&gt;" in body
+    assert "<script>" not in body and "<b>Eve</b>" not in body
+
+
+def test_invitation_and_password_emails_escape_names():
+    inv = _sent_payload(email_utils.send_invitation_email, recipient_email="a@wavygo.in",
+                        recipient_name="<img src=x>", role="Employee", token="tok",
+                        invited_by="<i>Boss</i>", department="<u>Ops</u>")
+    assert "<img src=x>" not in inv["htmlContent"] and "&lt;img src=x&gt;" in inv["htmlContent"]
+    assert "<i>Boss</i>" not in inv["htmlContent"] and "<u>Ops</u>" not in inv["htmlContent"]
+    pwd = _sent_payload(email_utils.send_password_reset_email, recipient_email="a@wavygo.in",
+                        recipient_name="A", new_password="p<ss>&1", reset_by="<b>Admin</b>")
+    assert "p&lt;ss&gt;&amp;1" in pwd["htmlContent"] and "<b>Admin</b>" not in pwd["htmlContent"]
+
+
+# ------------------------- calendar -------------------------
+
+@pytest.mark.parametrize("kind", ["invite", "reminder", "rescheduled", "cancelled"])
+def test_calendar_email_payload(kind):
+    data = _sent_payload(
+        email_utils.send_calendar_email,
+        recipient_email="ashish@wavygo.in", recipient_name="Ashish", kind=kind,
+        title="Design <review>", when="Mon 28 Sep 2026, 07:45 AM – 08:45 AM IST",
+        actor="Anil Anand", location="Conf room", meeting_link="https://meet.google.com/abc",
+        event_id="ev1", when_phrase="starts in 15 min",
+    )
+    assert data["to"] == [{"email": "ashish@wavygo.in", "name": "Ashish"}]
+    assert "Design <review>" in data["subject"]
+    assert "Design &lt;review&gt;" in data["htmlContent"]
+    assert "/calendar?event=ev1" in data["htmlContent"]
+    assert ("meet.google.com" in data["htmlContent"]) == (kind != "cancelled")
+
+
+def test_calendar_email_rejects_unsafe_meeting_link_and_unknown_kind():
+    data = _sent_payload(
+        email_utils.send_calendar_email, recipient_email="a@wavygo.in", recipient_name="A", kind="invite",
+        title="T", when="now", meeting_link="javascript:alert(1)",
+    )
+    assert "javascript:" not in data["htmlContent"]
+    with pytest.raises(ValueError):
+        email_utils.send_calendar_email(recipient_email="a@wavygo.in", recipient_name="A", kind="nope", title="T", when="x")
+
+
+def test_calendar_email_skipped_when_unconfigured(monkeypatch):
+    monkeypatch.setenv("BREVO_API_KEY", "")
+    with patch("email_utils.requests.post") as mock_post:
+        assert email_utils.send_calendar_email(recipient_email="a@wavygo.in", recipient_name="A",
+                                               kind="invite", title="T", when="x") is False
+        assert not mock_post.called

@@ -10,14 +10,34 @@ jobs:
   backend-test:
     name: 🐍 Backend Tests & Quality Checks
     runs-on: ubuntu-latest
+    services:
+      # The *_local_test.py suites start their own API server against a throwaway database here.
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.runCommand({ ping: 1 })'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      MONGO_URL: mongodb://localhost:27017
+      DB_NAME: wavygo_ci
+      JWT_SECRET: ci-only-secret-not-used-anywhere-else
+      CORS_ORIGINS: "*"
+      FOUNDER_EMAIL: founder@ci.wavygo.in
+      FOUNDER_PASSWORD: Ci-Founder-Pass-123
+      FOUNDER_NAME: CI Founder
+      FRONTEND_URL: http://localhost:3000
     steps:
       - name: Checkout Codebase
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Set up Python 3.10
-        uses: actions/setup-python@v4
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: '3.12'
           cache: 'pip'
 
       - name: Install Backend Dependencies
@@ -27,6 +47,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run Pytest Test Suite
+        # End-to-end suites against a deployment are skipped unless WAVYGO_E2E_URL is set.
         run: |
           cd backend
           pytest
@@ -36,19 +57,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Codebase
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Set up Node.js 18
-        uses: actions/setup-node@v3
+      - name: Set up Node.js 22
+        uses: actions/setup-node@v4
         with:
-          node-version: 18
+          node-version: 22
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install Frontend Dependencies
+        # frontend/.npmrc sets legacy-peer-deps for the date-fns / eslint peer ranges.
         run: |
           cd frontend
-          npm ci || npm install
+          npm ci
 
       - name: Build React Application
         run: |

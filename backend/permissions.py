@@ -12,7 +12,7 @@ MODULE_ACCESS = {
     "opportunity-hub": {"Founder", "Admin", "Manager", "Employee"},
     "employees":       {"Founder", "Admin", "Manager", "Employee", "Intern"},
     "wavygo-connect":  {"Founder", "Admin", "Manager", "Employee", "Intern"},
-    "company-vault":   {"Founder"},
+    "company-vault":   {"Founder", "Admin", "Manager", "Employee", "Intern"},
     "finance":         {"Founder"},
     "crm":             {"Founder", "Admin", "Manager"},
     "marketing":       {"Founder", "Admin", "Manager"},
@@ -42,7 +42,7 @@ ACTIONS = {
     "user.invite.manager":          {"Founder", "Admin"},
     "user.invite.employee":         {"Founder", "Admin"},
     "user.invite.intern":           {"Founder", "Admin"},
-    "user.delete":                  {"Founder"},
+    "user.delete":                  {"Founder", "Admin"},
     "user.edit_others":             {"Founder", "Admin", "Manager"},
     "user.edit_self":               {"Founder", "Admin", "Manager", "Employee", "Intern"},
 
@@ -79,8 +79,30 @@ ACTIONS = {
     "connect.post_announcement":    {"Founder", "Admin"},
     "connect.send_dm":              {"Founder", "Admin", "Manager", "Employee", "Intern"},
 
+    "calendar.create":              {"Founder", "Admin", "Manager", "Employee"},
+    "calendar.view_all":            {"Founder", "Admin"},
+    "calendar.edit_any":            {"Founder", "Admin"},
+    "calendar.delete_any":          {"Founder", "Admin"},
+
     "activity.view_all":            {"Founder", "Admin"},
     "activity.view_team":           {"Manager"},
+
+    "vault.view":                   {"Founder", "Admin", "Manager", "Employee", "Intern"},
+    "vault.manage":                 {"Founder", "Admin"},
+
+    "finance.view":                 {"Founder"},
+    "finance.manage":               {"Founder"},
+
+    "crm.view":                     {"Founder", "Admin", "Manager"},
+    "crm.edit":                     {"Founder", "Admin", "Manager"},
+
+    "marketing.view":               {"Founder", "Admin", "Manager"},
+    "marketing.manage":             {"Founder", "Admin", "Manager"},
+
+    "analytics.view":               {"Founder", "Admin", "Manager"},
+    "analytics.export":             {"Founder", "Admin", "Manager"},
+
+    "ai.use":                       {"Founder", "Admin", "Manager", "Employee", "Intern"},
 
     "settings.company_edit":        {"Founder"},
     "settings.roles_view":          {"Founder", "Admin", "Manager", "Employee", "Intern"},

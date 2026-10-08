@@ -84,3 +84,32 @@ async def sync_employee_department_group(
         await remove_member_from_department_channel(db, user_id, old_department)
     if new_department:
         await add_member_to_department_channel(db, user_id, new_department)
+
+
+async def rename_department_channel(db, old_department: str | None, new_department: str | None, member_ids=()):
+    """Carry a department's group over to its new name: the existing channel is renamed (keeping its
+    members and history) rather than a new, empty one being created. If a group already exists under
+    the new name, the old group's members join it. `member_ids` (everyone now in the department) are
+    added either way, so the group ends up matching the department."""
+    old = (old_department or "").strip()
+    new = (new_department or "").strip()
+    if not new:
+        return None
+    channel = await db.channels.find_one({"kind": "group", "department": new})
+    old_channel = await db.channels.find_one({"kind": "group", "department": old}) if old and old != new else None
+    if old_channel and not channel:
+        await db.channels.update_one({"_id": old_channel["_id"]}, {"$set": {
+            "department": new,
+            "name": f"{new} Group",
+            "description": f"Department group for {new}",
+        }})
+        channel = await db.channels.find_one({"_id": old_channel["_id"]})
+    elif old_channel:
+        await db.channels.update_one({"_id": channel["_id"]},
+                                     {"$addToSet": {"members": {"$each": old_channel.get("members", [])}}})
+    if not channel:
+        channel = await get_or_create_department_channel(db, new)
+    ids = [str(i) for i in member_ids if i]
+    if ids:
+        await db.channels.update_one({"_id": channel["_id"]}, {"$addToSet": {"members": {"$each": ids}}})
+    return await db.channels.find_one({"_id": channel["_id"]})

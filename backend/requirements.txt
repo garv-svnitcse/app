@@ -27,3 +27,4 @@ python-multipart>=0.0.9
 jq>=1.6.0
 typer>=0.9.0
 certifi>=2024.2.2
+anthropic==1.8.0

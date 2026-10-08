@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect } from "react";
 import { NavLink } from "react-router-dom";
-import { ChevronsLeft, ChevronsRight, Circle } from "lucide-react";
+import { ChevronsLeft, ChevronsRight, Circle, X } from "lucide-react";
 import { visibleNavFor } from "@/constants/nav";
 import { SHELL, SIDEBAR_NAV } from "@/constants/testIds";
 import { WavygoLogo } from "@/components/WavygoLogo";
@@ -13,15 +13,27 @@ function initials(name) {
   return (name || "").split(" ").map(s => s[0]).filter(Boolean).slice(0, 2).join("").toUpperCase();
 }
 
-export function Sidebar({ collapsed, onToggle }) {
+export function Sidebar({ collapsed, onToggle, mobileOpen = false, onMobileClose }) {
   const { user } = useAuth();
+
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const onKey = (e) => { if (e.key === "Escape") onMobileClose?.(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [mobileOpen, onMobileClose]);
 
   return (
     <TooltipProvider delayDuration={150}>
+      {mobileOpen && (
+        <div className="fixed inset-0 z-40 bg-black/50 md:hidden" onClick={onMobileClose} aria-hidden="true" />
+      )}
       <aside
         data-testid={SHELL.sidebar}
         className={cn(
-          "fixed inset-y-0 left-0 z-40 flex flex-col text-sidebar-fg bg-sidebar transition-[width] duration-300",
+          "fixed inset-y-0 left-0 z-50 md:z-40 flex flex-col text-sidebar-fg bg-sidebar",
+          "transition-[width,transform] duration-300 md:translate-x-0",
+          mobileOpen ? "translate-x-0 shadow-2xl" : "-translate-x-full",
           collapsed ? "w-[72px]" : "w-[264px]"
         )}
         style={{ backgroundColor: "hsl(var(--sidebar-bg))" }}
@@ -108,13 +120,22 @@ export function Sidebar({ collapsed, onToggle }) {
           </div>
         </div>
 
+        {/* Mobile close */}
+        <button
+          onClick={onMobileClose}
+          className="md:hidden absolute top-5 right-3 h-8 w-8 rounded-md text-sidebar-fg/80 hover:text-white hover:bg-white/10 flex items-center justify-center"
+          aria-label="Close menu"
+        >
+          <X className="h-4 w-4" />
+        </button>
+
         {/* Collapse toggle */}
         <button
           data-testid={SHELL.sidebarToggle}
           onClick={onToggle}
           className={cn(
-            "absolute top-6 -right-3 h-6 w-6 rounded-full bg-white text-slate-700 shadow-md",
-            "flex items-center justify-center hover:bg-slate-50 transition-colors border border-slate-200"
+            "hidden md:flex absolute top-6 -right-3 h-6 w-6 rounded-full bg-white text-slate-700 shadow-md",
+            "items-center justify-center hover:bg-slate-50 transition-colors border border-slate-200"
           )}
           aria-label="Toggle sidebar"
         >

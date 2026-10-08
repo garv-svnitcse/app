@@ -13,15 +13,28 @@ import { api, formatApiError } from "@/lib/api";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 
+const COMPANY_FIELDS = [
+  { key: "name", label: "Name" },
+  { key: "brand", label: "Brand" },
+  { key: "cin", label: "CIN" },
+  { key: "industry", label: "Industry" },
+  { key: "country", label: "Country" },
+  { key: "founded", label: "Founded" },
+  { key: "hq", label: "HQ" },
+];
+
 export default function Settings() {
   const { user, refreshMe } = useAuth();
   const { theme, setTheme } = useTheme();
   const { can, role } = usePermission();
   const canChangePassword = can("auth.change_own_password");
+  const canEditCompany = can("settings.company_edit");
   const isPersonal = role === "Employee" || role === "Intern";
   const [profile, setProfile] = useState({ name: "", phone: "", designation: "", department: "" });
-  const [pwForm, setPwForm] = useState({ current_password: "", new_password: "" });
+  const [pwForm, setPwForm] = useState({ current_password: "", new_password: "", confirm_password: "" });
   const [company, setCompany] = useState(null);
+  const [companyForm, setCompanyForm] = useState(null);
+  const [savingCompany, setSavingCompany] = useState(false);
   const [roles, setRoles] = useState([]);
 
   const [savingProfile, setSavingProfile] = useState(false);
@@ -35,7 +48,7 @@ export default function Settings() {
   }, [user]);
 
   useEffect(() => {
-    api.get("/settings/company").then(({ data }) => setCompany(data)).catch(() => {});
+    api.get("/settings/company").then(({ data }) => { setCompany(data); setCompanyForm(data); }).catch(() => {});
     api.get("/settings/roles").then(({ data }) => setRoles(data.roles)).catch(() => {});
   }, []);
 
@@ -52,12 +65,37 @@ export default function Settings() {
     }
   }
 
+  async function saveCompany() {
+    // Send only the fields that changed
+    const changes = Object.fromEntries(
+      Object.entries(companyForm).filter(([k, v]) => v !== company[k]).map(([k, v]) => [k, v.trim()])
+    );
+    if (!Object.keys(changes).length) { toast.info("No changes to save"); return; }
+    const empty = COMPANY_FIELDS.find(({ key }) => key in changes && !changes[key]);
+    if (empty) { toast.error(`${empty.label} can't be empty`); return; }
+    setSavingCompany(true);
+    try {
+      const { data } = await api.patch("/settings/company", changes);
+      setCompany(data);
+      setCompanyForm(data);
+      toast.success("Company details updated");
+    } catch (e) {
+      toast.error(formatApiError(e));
+    } finally {
+      setSavingCompany(false);
+    }
+  }
+
   async function changePassword() {
+    if (pwForm.new_password !== pwForm.confirm_password) {
+      toast.error("New password and confirmation do not match");
+      return;
+    }
     setChangingPw(true);
     try {
-      await api.post("/users/me/password", pwForm);
-      setPwForm({ current_password: "", new_password: "" });
-      toast.success("Password updated");
+      await api.post("/users/me/password", { current_password: pwForm.current_password, new_password: pwForm.new_password });
+      setPwForm({ current_password: "", new_password: "", confirm_password: "" });
+      toast.success("Password updated. Other sessions have been signed out.");
     } catch (e) {
       toast.error(formatApiError(e));
     } finally {
@@ -103,7 +141,22 @@ export default function Settings() {
           <Card className="border-border">
             <CardHeader><CardTitle className="font-display">Company</CardTitle><CardDescription>Registered entity details</CardDescription></CardHeader>
             <CardContent>
-              {company ? (
+              {company && canEditCompany && companyForm ? (
+                <div className="space-y-4 max-w-2xl">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
+                    {COMPANY_FIELDS.map(({ key, label }) => (
+                      <div key={key}>
+                        <Label>{label}</Label>
+                        <Input className="mt-1.5" value={companyForm[key] || ""} onChange={(e) => setCompanyForm(s => ({ ...s, [key]: e.target.value }))} disabled={savingCompany} data-testid={`company-${key}-input`} />
+                      </div>
+                    ))}
+                  </div>
+                  <Button onClick={saveCompany} disabled={savingCompany} data-testid="save-company-btn">
+                    {savingCompany ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
+                    {savingCompany ? "Saving..." : "Save company details"}
+                  </Button>
+                </div>
+              ) : company ? (
                 <dl className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
                   {Object.entries(company).map(([k, v]) => (
                     <div key={k}>
@@ -140,6 +193,10 @@ export default function Settings() {
                 <>
                   <div><Label>Current password</Label><Input type="password" className="mt-1.5" value={pwForm.current_password} onChange={(e) => setPwForm(s => ({ ...s, current_password: e.target.value }))} disabled={changingPw} data-testid="current-password-input" /></div>
                   <div><Label>New password</Label><Input type="password" className="mt-1.5" value={pwForm.new_password} onChange={(e) => setPwForm(s => ({ ...s, new_password: e.target.value }))} disabled={changingPw} data-testid="new-password-input" /></div>
+                  <div><Label>Confirm new password</Label><Input type="password" className="mt-1.5" value={pwForm.confirm_password} onChange={(e) => setPwForm(s => ({ ...s, confirm_password: e.target.value }))} disabled={changingPw} data-testid="confirm-password-input" /></div>
+                  {pwForm.confirm_password && pwForm.new_password !== pwForm.confirm_password && (
+                    <div className="text-[12px] text-destructive" data-testid="password-mismatch-note">Passwords do not match.</div>
+                  )}
                   <Button onClick={changePassword} disabled={changingPw} data-testid="change-password-btn">
                     {changingPw ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : null}
                     {changingPw ? "Updating..." : "Update password"}

@@ -10,10 +10,12 @@ export function AuthProvider({ children }) {
   const bootstrap = useCallback(async () => {
     if (!tokens.access) { setUser(false); setLoading(false); return; }
     try {
+      // An expired access token is refreshed by the api interceptor before this fails.
       const { data } = await api.get("/auth/me");
       setUser(data);
-    } catch {
-      tokens.clear();
+    } catch (e) {
+      // Only drop the session when the server rejected it; a network blip keeps the tokens for the next load.
+      if ([401, 403].includes(e?.response?.status)) tokens.clear();
       setUser(false);
     } finally {
       setLoading(false);
@@ -26,6 +28,7 @@ export function AuthProvider({ children }) {
     try {
       const { data } = await api.post("/auth/login", { email, password, remember });
       tokens.set(data.access_token, data.refresh_token);
+      localStorage.setItem("wavygo_login_at", String(Date.now()));
       setUser(data.user);
       return { ok: true };
     } catch (e) {
@@ -34,9 +37,13 @@ export function AuthProvider({ children }) {
   }
 
   async function logout() {
-    try { await api.post("/auth/logout"); } catch { /* ignore */ }
-    tokens.clear();
-    setUser(false);
+    // Send the refresh token so the server revokes this session
+    try { await api.post("/auth/logout", { refresh_token: tokens.refresh }); } catch { /* ignore */ }
+    finally {
+      tokens.clear();
+      localStorage.removeItem("wavygo_login_at");
+      setUser(false);
+    }
   }
 
   async function refreshMe() {

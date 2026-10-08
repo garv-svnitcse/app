@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import {
   ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip,
@@ -8,6 +8,7 @@ import {
   TrendingUp, TrendingDown, IndianRupee, Bike, Users, Building2, Handshake,
   Circle, ArrowUpRight, Plus, Bell, ClipboardList, ScrollText, Target,
   Shield, Server, CheckCircle2, AlertTriangle, Info, XCircle, Star, Zap,
+  RefreshCw, CalendarDays, Briefcase, Clock,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -16,12 +17,14 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import { Progress } from "@/components/ui/progress";
+import { useLiveRefresh } from "@/hooks/useLiveRefresh";
 import { api } from "@/lib/api";
 import { DASHBOARD } from "@/constants/testIds";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePermission } from "@/hooks/usePermission";
 import { useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
-import { formatDistanceToNow } from "date-fns";
+import { format, formatDistanceToNow, parseISO } from "date-fns";
 
 const KPI_ICONS = {
   revenue: IndianRupee, revenue_today: IndianRupee, revenue_week: IndianRupee,
@@ -29,7 +32,68 @@ const KPI_ICONS = {
   customers: Users, vehicles: Building2, vendors: Handshake,
   my_todo: ClipboardList, my_in_progress: Zap, my_review: Target,
   my_completed: CheckCircle2, my_leave: Bell,
+  open_tasks: ClipboardList, overdue_tasks: Clock, open_opportunities: Target,
+  pipeline_value: Briefcase, pending_leave: Bell,
 };
+
+// Visual treatment per live service status reported by /dashboard/stats.
+const STATUS_STYLE = {
+  operational: { label: "Operational", text: "text-success", dot: "bg-success", badge: "bg-success/10 text-success hover:bg-success/10" },
+  degraded: { label: "Degraded", text: "text-warning", dot: "bg-warning", badge: "bg-warning/10 text-warning hover:bg-warning/10" },
+  not_configured: { label: "Not configured", text: "text-warning", dot: "bg-warning", badge: "bg-warning/10 text-warning hover:bg-warning/10" },
+  down: { label: "Down", text: "text-destructive", dot: "bg-destructive", badge: "bg-destructive/10 text-destructive hover:bg-destructive/10" },
+  idle: { label: "Idle", text: "text-muted-foreground", dot: "bg-muted-foreground", badge: "bg-muted text-muted-foreground hover:bg-muted" },
+};
+
+// Shown only when the role can open the target module and complete the action (first four that pass).
+// Links open the target page's create dialog, like Quick Create.
+const QUICK_ACTIONS = [
+  { icon: Plus, label: "New booking", to: "/marketplace?tab=bookings&create=booking", module: "marketplace", action: "marketplace.any" },
+  { icon: Handshake, label: "Onboard vendor", to: "/marketplace?tab=vendors&create=vendor", module: "marketplace", action: "marketplace.any" },
+  { icon: Target, label: "Log opportunity", to: "/opportunity-hub?create=opportunity", module: "opportunity-hub", action: "opportunity.create" },
+  { icon: Bell, label: "Announce update", to: "/wavygo-connect", module: "wavygo-connect", action: "connect.post_announcement" },
+  { icon: ClipboardList, label: "New task", to: "/task-board?create=task", module: "task-board", action: "task.create" },
+  { icon: CalendarDays, label: "Schedule event", to: "/calendar?create=event", module: "calendar", action: "calendar.create" },
+];
+
+function timeAgo(value) {
+  try { return formatDistanceToNow(new Date(value), { addSuffix: true }); } catch { return ""; }
+}
+
+// Task due dates are either YYYY-MM-DD or a full ISO timestamp.
+function formatDue(due) {
+  if (!due) return "No due date";
+  try {
+    return /^\d{4}-\d{2}-\d{2}$/.test(due) ? format(parseISO(due), "d MMM") : format(new Date(due), "d MMM, h:mm a");
+  } catch { return due; }
+}
+
+function formatGrowth(g) {
+  if (g === null || g === undefined) return "—";
+  return `${g > 0 ? "+" : ""}${g}%`;
+}
+
+// delta === null means there is nothing to compare against (previous period was 0).
+function DeltaBadge({ k }) {
+  if (!k.compare) return null;
+  if (k.delta === null || k.delta === undefined) {
+    return (
+      <span title={k.compare} className="inline-flex items-center text-[11px] font-semibold px-1.5 py-0.5 rounded text-muted-foreground bg-muted">
+        {k.value > 0 ? "New" : "—"}
+      </span>
+    );
+  }
+  const positive = k.delta >= 0;
+  return (
+    <span title={k.compare} className={cn(
+      "inline-flex items-center gap-1 text-[11px] font-semibold px-1.5 py-0.5 rounded",
+      k.delta === 0 ? "text-muted-foreground bg-muted" : positive ? "text-success bg-success/10" : "text-destructive bg-destructive/10"
+    )}>
+      {positive ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+      {k.delta > 0 ? "+" : ""}{k.delta}%
+    </span>
+  );
+}
 
 function formatValue(k) {
   if (k.format === "inr") {
@@ -58,14 +122,53 @@ function ChartTooltip({ active, payload, label, unit }) {
 
 export default function Dashboard() {
   const { user } = useAuth();
+  const { can, canViewModule } = usePermission();
   const nav = useNavigate();
   const [data, setData] = useState(null);
   const [activity, setActivity] = useState([]);
+  const [error, setError] = useState(null);
+  const [loading, setLoading] = useState(false);
+  const [fetchedAt, setFetchedAt] = useState(null);
+  const [, setTick] = useState(0);
+  const canSeeActivity = canViewModule("activity-logs");
 
+  const load = useCallback(({ background = false } = {}) => {
+    if (!background) {
+      setLoading(true);
+      setError(null);
+    }
+    api.get("/dashboard/stats")
+      .then(({ data }) => { setData(data); setFetchedAt(new Date()); setError(null); })
+      .catch((e) => { if (!background) setError(e?.response?.data?.detail || "Could not load dashboard data."); })
+      .finally(() => { if (!background) setLoading(false); });
+    if (canSeeActivity) {
+      api.get("/activity?limit=6").then(({ data }) => setActivity(data)).catch(() => setActivity([]));
+    }
+  }, [canSeeActivity]);
+
+  useEffect(() => { load(); }, [load]);
+  useLiveRefresh(load, 60000);
+
+  // Re-render every 30s so "Updated … ago" stays truthful.
   useEffect(() => {
-    api.get("/dashboard/stats").then(({ data }) => setData(data)).catch(() => {});
-    api.get("/activity?limit=6").then(({ data }) => setActivity(data)).catch(() => {});
+    const id = setInterval(() => setTick((t) => t + 1), 30000);
+    return () => clearInterval(id);
   }, []);
+
+  if (!data && error) {
+    return (
+      <Card data-testid="dashboard-error" className="border-border">
+        <CardContent className="p-10 text-center">
+          <AlertTriangle className="h-8 w-8 mx-auto text-destructive" />
+          <div className="mt-3 text-sm font-medium text-foreground">Dashboard failed to load</div>
+          <div className="mt-1 text-sm text-muted-foreground">{String(error)}</div>
+          <Button variant="outline" size="sm" onClick={load} disabled={loading} className="mt-4 h-8 text-xs" data-testid="dashboard-retry">
+            <RefreshCw className={cn("mr-1.5 h-3.5 w-3.5", loading && "animate-spin")} />Retry
+          </Button>
+        </CardContent>
+      </Card>
+    );
+  }
 
   if (!data) {
     return (
@@ -78,12 +181,66 @@ export default function Dashboard() {
   }
 
   const priorityStyle = {
+    urgent: "text-destructive-foreground bg-destructive",
     high: "text-destructive bg-destructive/10",
     medium: "text-warning bg-warning/10",
     low: "text-info bg-info/10",
   };
 
   const isEmployeeOrIntern = user?.role === "Employee" || user?.role === "Intern";
+  // Marketplace / revenue sections are only sent to roles that can open Marketplace.
+  const showMarketplace = !isEmployeeOrIntern && Array.isArray(data.revenue_series);
+  const quickActions = QUICK_ACTIONS.filter((a) => canViewModule(a.module) && can(a.action)).slice(0, 4);
+  // Whole open pipeline in the caller's scope (server total), not just the few deals listed.
+  const pipelineLakhs = Math.round((Number(data.pipeline?.value_lakhs) || 0) * 100) / 100;
+  const pipelineCount = data.pipeline?.count ?? data.opportunities.length;
+
+  // Marks the notification read (updating the top-nav badge) and follows its link.
+  const openNotification = async (n) => {
+    if (!n.read) {
+      try {
+        await api.post(`/notifications/${n.id}/read`);
+        window.dispatchEvent(new Event("wavygo:notifications-changed"));
+      } catch { /* navigation still works */ }
+    }
+    nav(n.link || "/notifications");
+  };
+  const overallStatus = STATUS_STYLE[data.system_status?.overall] || STATUS_STYLE.degraded;
+  const updated = fetchedAt ? `Updated ${timeAgo(fetchedAt)}.` : "";
+
+  // Upcoming events, shown to every role (Employee/Intern next to their tasks).
+  const calendarCard = (
+    <Card data-testid={DASHBOARD.calendarList} className="border-border">
+      <CardHeader className="pb-2">
+        <CardTitle className="font-display text-[17px]">Upcoming calendar</CardTitle>
+        <CardDescription>Next 5 events · IST</CardDescription>
+      </CardHeader>
+      <CardContent className="pt-2">
+        {data.upcoming_events.length === 0 && (
+          <div className="py-6 text-center text-sm text-muted-foreground">
+            Nothing scheduled.{" "}
+            <button onClick={() => nav("/calendar")} className="text-primary hover:underline">Open calendar</button>
+          </div>
+        )}
+        <ul className="space-y-3">
+          {data.upcoming_events.map((e) => (
+            <li key={e.id}>
+              <button onClick={() => nav(e.link || "/calendar")} data-testid={`upcoming-event-${e.id}`}
+                className="w-full flex items-start gap-3 text-left rounded-md hover:bg-muted/50 transition-colors">
+                <div className="h-9 w-9 rounded-md bg-info/10 text-info flex items-center justify-center shrink-0">
+                  <Circle className="h-2.5 w-2.5 fill-info" />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-[13.5px] leading-tight text-foreground">{e.title}</div>
+                  <div className="text-[11.5px] text-muted-foreground mt-1">{e.when}{e.category ? ` · ${e.category}` : ""}</div>
+                </div>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </CardContent>
+    </Card>
+  );
 
   return (
     <div data-testid={DASHBOARD.root} className="space-y-8">
@@ -99,11 +256,17 @@ export default function Dashboard() {
           <p className="text-sm text-muted-foreground mt-2 max-w-xl">
             {isEmployeeOrIntern
               ? "A summary of your tasks, pending leaves, and recent updates across the workspace."
-              : "A live view of every city, vehicle and rupee moving through WavyGo Mobility. Updated moments ago."}
+              : showMarketplace
+                ? `A live view of every city, vehicle and rupee moving through WavyGo Mobility. ${updated}`
+                : `A live view of tasks, deals and team activity across WavyGo Mobility. ${updated}`}
+            {error && <span className="text-destructive"> Refresh failed: {String(error)}</span>}
           </p>
         </div>
         <div className="flex items-center gap-2">
-          {!isEmployeeOrIntern && (
+          <Button variant="ghost" size="sm" onClick={load} disabled={loading} className="h-9" data-testid="dashboard-refresh" aria-label="Refresh dashboard">
+            <RefreshCw className={cn("h-3.5 w-3.5", loading && "animate-spin")} />
+          </Button>
+          {!isEmployeeOrIntern && canViewModule("analytics") && (
             <Button variant="outline" onClick={() => nav("/analytics")} className="h-9">
               Full analytics <ArrowUpRight className="ml-1.5 h-3.5 w-3.5" />
             </Button>
@@ -115,7 +278,6 @@ export default function Dashboard() {
       <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-3 xl:grid-cols-5 gap-4">
         {data.kpis.map((k, idx) => {
           const Icon = KPI_ICONS[k.key] || TrendingUp;
-          const positive = k.delta >= 0;
           return (
             <motion.div key={k.key} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: idx * 0.04 }}>
               <Card data-testid={DASHBOARD.kpi(k.key)} className="hover-lift border-border">
@@ -124,15 +286,7 @@ export default function Dashboard() {
                     <div className="h-9 w-9 rounded-md bg-primary/10 text-primary flex items-center justify-center">
                       <Icon className="h-4.5 w-4.5" strokeWidth={2} />
                     </div>
-                    {k.delta !== 0 && (
-                      <span className={cn(
-                        "inline-flex items-center gap-1 text-[11px] font-semibold px-1.5 py-0.5 rounded",
-                        positive ? "text-success bg-success/10" : "text-destructive bg-destructive/10"
-                      )}>
-                        {positive ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-                        {positive ? "+" : ""}{k.delta}%
-                      </span>
-                    )}
+                    <DeltaBadge k={k} />
                   </div>
                   <div className="mt-4">
                     <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">{k.label}</div>
@@ -148,14 +302,14 @@ export default function Dashboard() {
       </div>
 
       {/* Charts row */}
-      {!isEmployeeOrIntern && (
+      {showMarketplace && (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <Card data-testid={DASHBOARD.revenueChart} className="lg:col-span-2 border-border">
             <CardHeader className="pb-2">
               <div className="flex items-start justify-between">
                 <div>
                   <CardTitle className="font-display text-[17px]">Revenue trajectory</CardTitle>
-                  <CardDescription>Monthly revenue vs target · ₹ in lakhs</CardDescription>
+                  <CardDescription>Monthly booking revenue · ₹ in lakhs</CardDescription>
                 </div>
                 <Badge variant="secondary" className="text-[10px]">6M</Badge>
               </div>
@@ -174,7 +328,6 @@ export default function Dashboard() {
                     <XAxis dataKey="month" tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} axisLine={false} tickLine={false} />
                     <YAxis tick={{ fill: "hsl(var(--muted-foreground))", fontSize: 11 }} axisLine={false} tickLine={false} />
                     <Tooltip content={<ChartTooltip unit="L" />} cursor={{ stroke: "hsl(var(--border))" }} />
-                    <Area type="monotone" dataKey="target" stroke="hsl(var(--muted-foreground))" strokeDasharray="4 4" fill="transparent" strokeWidth={1.5} />
                     <Area type="monotone" dataKey="revenue" stroke="hsl(var(--chart-1))" fill="url(#revFill)" strokeWidth={2.5} />
                   </AreaChart>
                 </ResponsiveContainer>
@@ -185,7 +338,7 @@ export default function Dashboard() {
           <Card data-testid={DASHBOARD.bookingsChart} className="border-border">
             <CardHeader className="pb-2">
               <CardTitle className="font-display text-[17px]">Bookings this week</CardTitle>
-              <CardDescription>Daily volume across all cities</CardDescription>
+              <CardDescription>Daily volume across all cities · last 7 days</CardDescription>
             </CardHeader>
             <CardContent className="pt-2">
               <div className="h-[260px]">
@@ -205,16 +358,16 @@ export default function Dashboard() {
       )}
 
       {/* Row: City table + tasks */}
-      <div className={cn("grid grid-cols-1 gap-4", !isEmployeeOrIntern ? "lg:grid-cols-3" : "")}>
-        {!isEmployeeOrIntern && (
+      <div className={cn("grid grid-cols-1 gap-4", showMarketplace ? "lg:grid-cols-3" : isEmployeeOrIntern ? "lg:grid-cols-2" : "")}>
+        {showMarketplace && (
           <Card data-testid={DASHBOARD.cityTable} className="lg:col-span-2 border-border">
             <CardHeader className="pb-2">
               <div className="flex items-start justify-between">
                 <div>
                   <CardTitle className="font-display text-[17px]">City performance</CardTitle>
-                  <CardDescription>Live view · sorted by revenue</CardDescription>
+                  <CardDescription>Live view · sorted by revenue · growth vs last month</CardDescription>
                 </div>
-                <Button variant="ghost" size="sm" onClick={() => nav("/analytics")} className="text-xs">View all</Button>
+                {canViewModule("analytics") && <Button variant="ghost" size="sm" onClick={() => nav("/analytics")} className="text-xs">View all</Button>}
               </div>
             </CardHeader>
             <CardContent className="pt-0">
@@ -228,6 +381,11 @@ export default function Dashboard() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
+                  {data.cities.length === 0 && (
+                    <TableRow className="border-border hover:bg-transparent">
+                      <TableCell colSpan={4} className="py-8 text-center text-sm text-muted-foreground">No bookings yet.</TableCell>
+                    </TableRow>
+                  )}
                   {data.cities.map((c) => (
                     <TableRow key={c.city} className="border-border">
                       <TableCell className="font-medium text-foreground">{c.city}</TableCell>
@@ -235,8 +393,11 @@ export default function Dashboard() {
                       <TableCell className="text-right font-medium text-foreground">₹{c.revenue}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
-                          <Progress value={Math.min(100, c.growth * 6)} className="h-1.5" />
-                          <span className="text-[11.5px] text-success font-medium min-w-[38px] text-right">+{c.growth}%</span>
+                          <Progress value={Math.max(0, Math.min(100, (c.growth || 0) * 6))} className="h-1.5" />
+                          <span className={cn("text-[11.5px] font-medium min-w-[38px] text-right",
+                            c.growth === null || c.growth === undefined ? "text-muted-foreground" : c.growth < 0 ? "text-destructive" : "text-success")}>
+                            {formatGrowth(c.growth)}
+                          </span>
                         </div>
                       </TableCell>
                     </TableRow>
@@ -247,17 +408,20 @@ export default function Dashboard() {
           </Card>
         )}
 
-        <Card data-testid={DASHBOARD.tasksList} className={cn("border-border", isEmployeeOrIntern ? "col-span-full" : "")}>
+        <Card data-testid={DASHBOARD.tasksList} className={cn("border-border", !showMarketplace && !isEmployeeOrIntern ? "col-span-full" : "")}>
           <CardHeader className="pb-2">
             <div className="flex items-start justify-between">
               <div>
                 <CardTitle className="font-display text-[17px]">Today's tasks</CardTitle>
-                <CardDescription>{data.tasks_today.length} to close by end of day</CardDescription>
+                <CardDescription>{data.tasks_due_count ?? data.tasks_today.length} due today or overdue</CardDescription>
               </div>
               <ClipboardList className="h-4 w-4 text-muted-foreground" />
             </div>
           </CardHeader>
           <CardContent className="pt-2">
+            {data.tasks_today.length === 0 && (
+              <div className="py-6 text-center text-sm text-muted-foreground">Nothing due today.</div>
+            )}
             <ul className="space-y-3">
               {data.tasks_today.map((t) => (
                 <li key={t.id} className="flex items-start gap-3">
@@ -265,8 +429,11 @@ export default function Dashboard() {
                     {t.priority}
                   </span>
                   <div className="min-w-0 flex-1">
-                    <div className="text-[13.5px] leading-tight text-foreground">{t.title}</div>
-                    <div className="text-[11px] text-muted-foreground mt-1">Due · {t.due}</div>
+                    <button type="button" onClick={() => nav(`/task-board?task_id=${t.id}`)} data-testid={`dashboard-task-${t.id}`}
+                      className="text-left text-[13.5px] leading-tight text-foreground hover:text-primary hover:underline">{t.title}</button>
+                    <div className={cn("text-[11px] mt-1", t.overdue ? "text-destructive" : "text-muted-foreground")}>
+                      {t.overdue ? "Overdue" : "Due"} · {formatDue(t.due)}{t.assignee_name ? ` · ${t.assignee_name}` : ""}
+                    </div>
                   </div>
                 </li>
               ))}
@@ -274,6 +441,7 @@ export default function Dashboard() {
             <Button variant="outline" size="sm" onClick={() => nav("/task-board")} className="w-full mt-4 h-8 text-xs">Open Task Board</Button>
           </CardContent>
         </Card>
+        {isEmployeeOrIntern && calendarCard}
       </div>
 
       {/* Row: Quick actions + Calendar + Activity */}
@@ -286,16 +454,11 @@ export default function Dashboard() {
             </CardHeader>
             <CardContent className="pt-2">
               <div className="grid grid-cols-2 gap-2">
-                {[
-                  { icon: Plus, label: "New booking", to: "/marketplace" },
-                  { icon: Handshake, label: "Onboard vendor", to: "/marketplace" },
-                  { icon: Target, label: "Log opportunity", to: "/opportunity-hub" },
-                  { icon: Bell, label: "Announce update", to: "/wavygo-connect" },
-                ].map((a) => {
+                {quickActions.map((a) => {
                   const Icon = a.icon;
                   return (
                     <button key={a.label} onClick={() => nav(a.to)}
-                            className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-[13px] text-foreground hover:border-primary/40 hover:bg-primary/[0.03] transition-colors">
+                      className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-[13px] text-foreground hover:border-primary/40 hover:bg-primary/[0.03] transition-colors">
                       <Icon className="h-4 w-4 text-primary" />{a.label}
                     </button>
                   );
@@ -304,27 +467,7 @@ export default function Dashboard() {
             </CardContent>
           </Card>
 
-          <Card data-testid={DASHBOARD.calendarList} className="border-border">
-            <CardHeader className="pb-2">
-              <CardTitle className="font-display text-[17px]">Upcoming calendar</CardTitle>
-              <CardDescription>Next few days</CardDescription>
-            </CardHeader>
-            <CardContent className="pt-2">
-              <ul className="space-y-3">
-                {data.upcoming_events.map((e) => (
-                  <li key={e.id} className="flex items-start gap-3">
-                    <div className="h-9 w-9 rounded-md bg-info/10 text-info flex items-center justify-center shrink-0">
-                      <Circle className="h-2.5 w-2.5 fill-info" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-[13.5px] leading-tight text-foreground">{e.title}</div>
-                      <div className="text-[11.5px] text-muted-foreground mt-1">{e.when}</div>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </CardContent>
-          </Card>
+          {calendarCard}
 
           <Card data-testid={DASHBOARD.activityFeed} className="border-border">
             <CardHeader className="pb-2">
@@ -337,6 +480,9 @@ export default function Dashboard() {
               </div>
             </CardHeader>
             <CardContent className="pt-2">
+              {activity.length === 0 && (
+                <div className="py-6 text-center text-sm text-muted-foreground">No recent activity.</div>
+              )}
               <ul className="space-y-3">
                 {activity.slice(0, 6).map((a) => (
                   <li key={a.id} className="flex items-start gap-3">
@@ -345,9 +491,9 @@ export default function Dashboard() {
                     </div>
                     <div className="text-[13px] leading-tight">
                       <span className="font-medium text-foreground">{a.user_name}</span>{" "}
-                      <span className="text-muted-foreground">{a.action.toLowerCase()}</span>{" "}
+                      <span className="text-muted-foreground">{(a.action || "").toLowerCase()}</span>{" "}
                       {a.target && <span className="text-foreground">· {a.target}</span>}
-                      <div className="text-[11px] text-muted-foreground mt-0.5">{a.module} · {(() => { try { return formatDistanceToNow(new Date(a.created_at), { addSuffix: true }); } catch { return ""; } })()}</div>
+                      <div className="text-[11px] text-muted-foreground mt-0.5">{a.module} · {timeAgo(a.created_at)}</div>
                     </div>
                   </li>
                 ))}
@@ -357,19 +503,22 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Opportunities */}
-      {!isEmployeeOrIntern && (
+      {/* Opportunities (Employees see theirs when they have any) */}
+      {(!isEmployeeOrIntern || data.opportunities.length > 0) && (
         <Card data-testid={DASHBOARD.opportunities} className="border-border">
           <CardHeader className="pb-2">
             <div className="flex items-start justify-between">
               <div>
                 <CardTitle className="font-display text-[17px]">Opportunity summary</CardTitle>
-                <CardDescription>Deals in play · sum ₹{data.opportunities.reduce((a, o) => a + o.value, 0)} L pipeline</CardDescription>
+                <CardDescription>{pipelineCount} open deal{pipelineCount === 1 ? "" : "s"} · ₹{pipelineLakhs} L total pipeline</CardDescription>
               </div>
               <Button variant="ghost" size="sm" onClick={() => nav("/opportunity-hub")} className="text-xs">Open hub</Button>
             </div>
           </CardHeader>
           <CardContent className="pt-2">
+            {data.opportunities.length === 0 && (
+              <div className="py-6 text-center text-sm text-muted-foreground">No open opportunities.</div>
+            )}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
               {data.opportunities.map((o) => (
                 <div key={o.id} className="p-4 rounded-lg border border-border bg-card hover-lift">
@@ -394,84 +543,90 @@ export default function Dashboard() {
       )}
 
       {/* ------------------ Part 2: Vendor performance + Company Health + System status ------------------ */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {data.vendor_perf && data.vendor_perf.length > 0 && (
-          <Card data-testid="vendor-performance" className="lg:col-span-2 border-border">
-            <CardHeader className="pb-2">
-              <div className="flex items-start justify-between">
-                <div>
-                  <CardTitle className="font-display text-[17px]">Vendor performance</CardTitle>
-                  <CardDescription>Top vendors by fleet size and rating</CardDescription>
+      {/* Skipped entirely when empty (Employee/Intern), so it doesn't add a blank gap. */}
+      {((showMarketplace && data.vendor_perf?.length > 0) || data.company_health) && (
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {showMarketplace && data.vendor_perf && data.vendor_perf.length > 0 && (
+            <Card data-testid="vendor-performance" className="lg:col-span-2 border-border">
+              <CardHeader className="pb-2">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <CardTitle className="font-display text-[17px]">Vendor performance</CardTitle>
+                    <CardDescription>Top vendors by fleet size and rating</CardDescription>
+                  </div>
+                  <Button variant="ghost" size="sm" onClick={() => nav("/marketplace")} className="text-xs">Open marketplace</Button>
                 </div>
-                <Button variant="ghost" size="sm" onClick={() => nav("/marketplace")} className="text-xs">Open marketplace</Button>
-              </div>
-            </CardHeader>
-            <CardContent className="pt-2">
-              <Table>
-                <TableHeader>
-                  <TableRow className="border-border hover:bg-transparent">
-                    <TableHead className="text-[11px] uppercase tracking-[0.1em]">Vendor</TableHead>
-                    <TableHead className="text-[11px] uppercase tracking-[0.1em]">City</TableHead>
-                    <TableHead className="text-[11px] uppercase tracking-[0.1em] text-right">Vehicles</TableHead>
-                    <TableHead className="text-[11px] uppercase tracking-[0.1em] text-right">Rating</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data.vendor_perf.map((v) => (
-                    <TableRow key={v.vendor} className="border-border">
-                      <TableCell className="font-medium">{v.vendor}</TableCell>
-                      <TableCell className="text-muted-foreground">{v.city}</TableCell>
-                      <TableCell className="text-right">{v.vehicles}</TableCell>
-                      <TableCell className="text-right">
-                        <span className="inline-flex items-center gap-1 text-warning font-medium">
-                          <Star className="h-3 w-3 fill-warning" /> {v.rating}
-                        </span>
-                      </TableCell>
+              </CardHeader>
+              <CardContent className="pt-2">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="border-border hover:bg-transparent">
+                      <TableHead className="text-[11px] uppercase tracking-[0.1em]">Vendor</TableHead>
+                      <TableHead className="text-[11px] uppercase tracking-[0.1em]">City</TableHead>
+                      <TableHead className="text-[11px] uppercase tracking-[0.1em] text-right">Vehicles</TableHead>
+                      <TableHead className="text-[11px] uppercase tracking-[0.1em] text-right">Rating</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        )}
+                  </TableHeader>
+                  <TableBody>
+                    {data.vendor_perf.map((v) => (
+                      <TableRow key={v.vendor} className="border-border">
+                        <TableCell className="font-medium">{v.vendor}</TableCell>
+                        <TableCell className="text-muted-foreground">{v.city}</TableCell>
+                        <TableCell className="text-right">{v.vehicles}</TableCell>
+                        <TableCell className="text-right">
+                          <span className="inline-flex items-center gap-1 text-warning font-medium">
+                            <Star className="h-3 w-3 fill-warning" /> {v.rating ?? "—"}
+                          </span>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          )}
 
-        {data.company_health && (
-          <Card data-testid="company-health" className="border-border">
-            <CardHeader className="pb-2">
-              <div className="flex items-start justify-between">
-                <div>
-                  <CardTitle className="font-display text-[17px]">Company health</CardTitle>
-                  <CardDescription>Composite operational score</CardDescription>
+          {data.company_health && (
+            <Card data-testid="company-health" className="border-border">
+              <CardHeader className="pb-2">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <CardTitle className="font-display text-[17px]">Company health</CardTitle>
+                    <CardDescription>Composite operational score</CardDescription>
+                  </div>
+                  <Shield className="h-4 w-4 text-muted-foreground" />
                 </div>
-                <Shield className="h-4 w-4 text-muted-foreground" />
-              </div>
-            </CardHeader>
-            <CardContent className="pt-2">
-              <div className="flex items-baseline gap-2">
-                <div className="font-display text-4xl font-semibold text-foreground tracking-tighter">{data.company_health.score}</div>
-                <div className="text-xs text-muted-foreground">/ 100</div>
-              </div>
-              <Progress value={data.company_health.score} className="h-1.5 mt-2" />
-              <ul className="mt-4 space-y-2">
-                {data.company_health.signals.map((s) => (
-                  <li key={s.label} className="flex items-center justify-between text-[12.5px]">
-                    <span className="text-muted-foreground">{s.label}</span>
-                    <div className="flex items-center gap-2 w-1/2">
-                      <Progress value={s.value} className="h-1 flex-1" />
-                      <span className="font-medium text-foreground w-8 text-right">{s.value}</span>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-              <div className="mt-4 pt-3 border-t border-border grid grid-cols-3 gap-2 text-center">
-                <div><div className="text-[10px] uppercase text-muted-foreground">KYC</div><div className="text-[13px] font-semibold">{data.company_health.flags.kyc_pending}</div></div>
-                <div><div className="text-[10px] uppercase text-muted-foreground">Tickets</div><div className="text-[13px] font-semibold">{data.company_health.flags.open_tickets}</div></div>
-                <div><div className="text-[10px] uppercase text-muted-foreground">Leave</div><div className="text-[13px] font-semibold">{data.company_health.flags.pending_leave}</div></div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-      </div>
+              </CardHeader>
+              <CardContent className="pt-2">
+                <div className="flex items-baseline gap-2">
+                  <div className="font-display text-4xl font-semibold text-foreground tracking-tighter">{data.company_health.score ?? "—"}</div>
+                  <div className="text-xs text-muted-foreground">/ 100</div>
+                </div>
+                <Progress value={data.company_health.score ?? 0} className="h-1.5 mt-2" />
+                {data.company_health.signals.length === 0 && (
+                  <div className="mt-4 text-[12.5px] text-muted-foreground">Not enough data to score yet.</div>
+                )}
+                <ul className="mt-4 space-y-2">
+                  {data.company_health.signals.map((s) => (
+                    <li key={s.label} className="flex items-center justify-between text-[12.5px]">
+                      <span className="text-muted-foreground">{s.label}</span>
+                      <div className="flex items-center gap-2 w-1/2">
+                        <Progress value={s.value} className="h-1 flex-1" />
+                        <span className="font-medium text-foreground w-8 text-right">{s.value}</span>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+                <div className="mt-4 pt-3 border-t border-border grid grid-cols-3 gap-2 text-center">
+                  <div><div className="text-[10px] uppercase text-muted-foreground">KYC</div><div className="text-[13px] font-semibold">{data.company_health.flags.kyc_pending ?? "—"}</div></div>
+                  <div><div className="text-[10px] uppercase text-muted-foreground">Tickets</div><div className="text-[13px] font-semibold">{data.company_health.flags.open_tickets ?? "—"}</div></div>
+                  <div><div className="text-[10px] uppercase text-muted-foreground">Leave</div><div className="text-[13px] font-semibold">{data.company_health.flags.pending_leave}</div></div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+      )}
 
       {/* ------------------ Part 2: Live system status + Recent notifications ------------------ */}
       <div className={cn("grid grid-cols-1 gap-4", !isEmployeeOrIntern ? "lg:grid-cols-2" : "")}>
@@ -481,29 +636,35 @@ export default function Dashboard() {
               <div className="flex items-start justify-between">
                 <div>
                   <CardTitle className="font-display text-[17px]">Live system status</CardTitle>
-                  <CardDescription>All services · {data.system_status.overall}</CardDescription>
+                  <CardDescription>
+                    Checked {timeAgo(data.system_status.checked_at)}
+                    {data.system_status.last_activity_at ? ` · last activity ${timeAgo(data.system_status.last_activity_at)}` : ""}
+                  </CardDescription>
                 </div>
-                <Badge className="bg-success/10 text-success hover:bg-success/10">
-                  <span className="h-1.5 w-1.5 rounded-full bg-success mr-1.5 inline-block" />Operational
+                <Badge className={overallStatus.badge}>
+                  <span className={cn("h-1.5 w-1.5 rounded-full mr-1.5 inline-block", overallStatus.dot)} />{overallStatus.label}
                 </Badge>
               </div>
             </CardHeader>
             <CardContent className="pt-2">
               <ul className="space-y-2.5">
-                {data.system_status.services.map((s) => (
-                  <li key={s.name} className="flex items-center justify-between text-[13px]">
-                    <div className="flex items-center gap-2">
-                      <Server className="h-3.5 w-3.5 text-muted-foreground" />
-                      <span className="font-medium">{s.name}</span>
-                    </div>
-                    <div className="flex items-center gap-2 text-[12px] text-muted-foreground">
-                      <span>{s.uptime}</span>
-                      <span className="inline-flex items-center gap-1 text-success">
-                        <span className="h-1.5 w-1.5 rounded-full bg-success" />operational
-                      </span>
-                    </div>
-                  </li>
-                ))}
+                {data.system_status.services.map((s) => {
+                  const st = STATUS_STYLE[s.status] || STATUS_STYLE.degraded;
+                  return (
+                    <li key={s.name} className="flex items-center justify-between text-[13px]">
+                      <div className="flex items-center gap-2">
+                        <Server className="h-3.5 w-3.5 text-muted-foreground" />
+                        <span className="font-medium">{s.name}</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-[12px] text-muted-foreground">
+                        <span>{s.at ? timeAgo(s.at) : s.detail}</span>
+                        <span className={cn("inline-flex items-center gap-1", st.text)}>
+                          <span className={cn("h-1.5 w-1.5 rounded-full", st.dot)} />{st.label.toLowerCase()}
+                        </span>
+                      </div>
+                    </li>
+                  );
+                })}
               </ul>
             </CardContent>
           </Card>
@@ -526,17 +687,20 @@ export default function Dashboard() {
                   const Icon = { info: Info, success: CheckCircle2, warning: AlertTriangle, error: XCircle }[n.kind] || Info;
                   const kindClass = { info: "bg-info/10 text-info", success: "bg-success/10 text-success", warning: "bg-warning/10 text-warning", error: "bg-destructive/10 text-destructive" }[n.kind] || "bg-info/10 text-info";
                   return (
-                    <li key={n.id} className="flex items-start gap-3">
-                      <div className={cn("h-8 w-8 rounded-md flex items-center justify-center shrink-0", kindClass)}>
-                        <Icon className="h-4 w-4" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-baseline gap-2">
-                          <div className="text-[13px] font-medium truncate">{n.title}</div>
-                          {!n.read && <span className="h-1.5 w-1.5 rounded-full bg-primary shrink-0" />}
+                    <li key={n.id}>
+                      <button type="button" onClick={() => openNotification(n)} data-testid={`dashboard-notification-${n.id}`}
+                        className="w-full flex items-start gap-3 text-left rounded-md hover:bg-muted/50 transition-colors">
+                        <div className={cn("h-8 w-8 rounded-md flex items-center justify-center shrink-0", kindClass)}>
+                          <Icon className="h-4 w-4" />
                         </div>
-                        <p className="text-[12px] text-muted-foreground line-clamp-1 mt-0.5">{n.body}</p>
-                      </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-baseline gap-2">
+                            <div className="text-[13px] font-medium truncate">{n.title}</div>
+                            {!n.read && <span className="h-1.5 w-1.5 rounded-full bg-primary shrink-0" />}
+                          </div>
+                          <p className="text-[12px] text-muted-foreground line-clamp-1 mt-0.5">{n.body}</p>
+                        </div>
+                      </button>
                     </li>
                   );
                 })}

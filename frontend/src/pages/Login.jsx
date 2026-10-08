@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Eye, EyeOff, ArrowRight, ShieldCheck, Bike, Loader2 } from "lucide-react";
+import { Eye, EyeOff, ArrowRight, ShieldCheck, Bike, Loader2, MailCheck } from "lucide-react";
 import { WavygoLogo } from "@/components/WavygoLogo";
 import { useAuth } from "@/contexts/AuthContext";
 import { AUTH } from "@/constants/testIds";
@@ -9,8 +9,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { api } from "@/lib/api";
+import { api, formatApiError } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const HERO_IMG = "https://images.unsplash.com/photo-1620802051782-725fa33db067?auto=format&fit=crop&w=1600&q=80";
@@ -20,7 +21,7 @@ const FLOATING_CARDS = [
   { key: "vendors",   label: "Active Vendors",   pos: "top-[8%] right-[8%]",       delay: 0.2, motion: "animate-float-slow" },
   { key: "vehicles",  label: "Vehicles Online",  pos: "top-[46%] left-[10%]",      delay: 0.3, motion: "animate-float-slow" },
   { key: "cities",    label: "Cities Served",    pos: "bottom-[24%] right-[10%]",  delay: 0.4, motion: "animate-float"      },
-  { key: "revenue",   label: "Revenue (MTD)",    pos: "bottom-[10%] left-[8%]",    delay: 0.5, motion: "animate-float-slow" },
+  // No revenue card: this page is public, so /dashboard/live-kpis deliberately omits revenue.
 ];
 
 export default function Login() {
@@ -36,6 +37,7 @@ export default function Login() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [kpis, setKpis] = useState([]);
+  const [forgotOpen, setForgotOpen] = useState(false);
 
   useEffect(() => {
     api.get("/dashboard/live-kpis").then(({ data }) => setKpis(data.kpis)).catch(() => {});
@@ -152,7 +154,7 @@ export default function Login() {
             <div>
               <div className="flex items-center justify-between">
                 <Label htmlFor="password" className="text-[12px] font-medium text-foreground/80">Password</Label>
-                <button type="button" data-testid={AUTH.forgotLink} onClick={() => toast.info("Password reset link will be emailed shortly.")} className="text-[12px] text-primary hover:underline">
+                <button type="button" data-testid={AUTH.forgotLink} onClick={() => setForgotOpen(true)} className="text-[12px] text-primary hover:underline">
                   Forgot password?
                 </button>
               </div>
@@ -192,6 +194,74 @@ export default function Login() {
           <div>CIN · U77100BR2025PTC077095</div>
         </footer>
       </div>
+
+      <ForgotPasswordDialog open={forgotOpen} onOpenChange={setForgotOpen} initialEmail={email} />
     </div>
+  );
+}
+
+const FORGOT_SENT_MESSAGE = "If an account exists for that email, a reset link has been sent. It expires in 30 minutes.";
+
+function ForgotPasswordDialog({ open, onOpenChange, initialEmail }) {
+  const [resetEmail, setResetEmail] = useState("");
+  const [sending, setSending] = useState(false);
+  const [sent, setSent] = useState(false);
+
+  useEffect(() => {
+    if (open) { setResetEmail(initialEmail.trim()); setSent(false); }
+  }, [open, initialEmail]);
+
+  async function onSubmit(e) {
+    e.preventDefault();
+    setSending(true);
+    try {
+      await api.post("/auth/forgot-password", { email: resetEmail.trim() });
+      setSent(true);
+    } catch (err) {
+      toast.error(formatApiError(err));
+    } finally {
+      setSending(false);
+    }
+  }
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-md">
+        <DialogHeader>
+          <DialogTitle className="font-display">Reset your password</DialogTitle>
+          <DialogDescription>
+            Enter your work email and we'll send you a link to choose a new password.
+          </DialogDescription>
+        </DialogHeader>
+        {sent ? (
+          <div className="space-y-4">
+            <div className="flex gap-2.5 text-[13px] text-foreground/90 bg-primary/10 rounded-md px-3 py-2.5 border border-primary/20">
+              <MailCheck className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+              <span>{FORGOT_SENT_MESSAGE}</span>
+            </div>
+            <DialogFooter>
+              <Button type="button" className="w-full sm:w-auto" onClick={() => onOpenChange(false)}>Back to sign in</Button>
+            </DialogFooter>
+          </div>
+        ) : (
+          <form onSubmit={onSubmit} className="space-y-4">
+            <div>
+              <Label htmlFor="reset-email" className="text-[12px] font-medium text-foreground/80">Email</Label>
+              <Input
+                id="reset-email" type="email" autoComplete="email" required autoFocus
+                value={resetEmail} onChange={(e) => setResetEmail(e.target.value)}
+                placeholder="you@wavygo.in" className="mt-1.5 h-11"
+              />
+            </div>
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>Cancel</Button>
+              <Button type="submit" disabled={sending || !resetEmail.trim()} className="bg-primary hover:bg-wavygo-600 text-primary-foreground">
+                {sending ? <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" /> Sending…</span> : "Send reset link"}
+              </Button>
+            </DialogFooter>
+          </form>
+        )}
+      </DialogContent>
+    </Dialog>
   );
 }

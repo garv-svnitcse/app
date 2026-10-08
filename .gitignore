@@ -41,6 +41,8 @@ yarn-debug.log*
 yarn-error.log*
 .pnpm-debug.log*
 dump.rdb
+# Local server output (e.g. backend/uvicorn.out.log) is machine-specific
+*.log
 
 # System files
 .DS_Store
