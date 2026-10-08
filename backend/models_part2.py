@@ -200,6 +200,13 @@ class EmployeeUpdateIn(BaseModel):
     designation: Optional[str] = Field(default=None, max_length=120)
     department: Optional[str] = Field(default=None, max_length=80)
     role: Optional[EmployeeRole] = None
+    joining_date: Optional[str] = None
+    aadhaar_number: Optional[str] = None
+    aadhaar_document_id: Optional[str] = None
+    aadhaar_document_name: Optional[str] = None
+    offer_letter_document_id: Optional[str] = None
+    offer_letter_document_name: Optional[str] = None
+    employee_documents: Optional[list] = None
 
 
 class AttendanceIn(BaseModel):

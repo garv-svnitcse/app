@@ -854,6 +854,9 @@ function Directory({ onChange }) {
       phone: u.phone || "",
       joining_date: u.joining_date || "",
       aadhaar_number: u.aadhaar_number || "",
+      aadhaar_document_file: null,
+      offer_letter_document_file: null,
+      other_document_files: [],
     });
   }
 
@@ -867,18 +870,50 @@ function Directory({ onChange }) {
   async function saveEdit() {
     if (!editingUser) return;
     setActionLoadingKey("save-edit");
+    const uploadedDocuments = [];
     try {
-      const updates = { ...editForm };
+      const {
+        aadhaar_document_file: aadhaarFile,
+        offer_letter_document_file: offerLetterFile,
+        other_document_files: otherFiles,
+        ...updates
+      } = editForm;
+
       if (!isFounder) {
         delete updates.joining_date;
         delete updates.aadhaar_number;
+      } else {
+        if (aadhaarFile) {
+          const document = await uploadEmployeeDocument(aadhaarFile, editForm.name.trim(), "Aadhaar");
+          uploadedDocuments.push(document);
+          updates.aadhaar_document_id = document.id;
+          updates.aadhaar_document_name = document.name;
+        }
+        if (offerLetterFile) {
+          const document = await uploadEmployeeDocument(offerLetterFile, editForm.name.trim(), "Offer Letter");
+          uploadedDocuments.push(document);
+          updates.offer_letter_document_id = document.id;
+          updates.offer_letter_document_name = document.name;
+        }
+        if (otherFiles?.length) {
+          updates.employee_documents = [];
+          for (const file of otherFiles) {
+            const document = await uploadEmployeeDocument(file, editForm.name.trim(), "Employee Document");
+            uploadedDocuments.push(document);
+            updates.employee_documents.push(document);
+          }
+        }
       }
+
       const { data } = await api.patch(`/employees/${editingUser.id}`, updates);
       toast.success(`Updated profile for ${data.name || editingUser.name}`);
       setEditingUser(null);
       load();
     } catch (e) {
       toast.error(formatApiError(e));
+      if (uploadedDocuments.length && await deleteUploadedEmployeeDocuments(uploadedDocuments)) {
+        toast.error("An uploaded employee document could not be removed after the update failed. Remove it from the Company Vault.");
+      }
     } finally {
       setActionLoadingKey(null);
     }
@@ -1381,10 +1416,27 @@ function Directory({ onChange }) {
               <div><Label>Department</Label><DepartmentSelect value={editForm.department} onChange={(v) => setEditForm(s => ({ ...s, department: v }))} departments={departments} disabled={!canChangeDepartment} /></div>
             </div>
             {isFounder && (
-              <div className="grid grid-cols-2 gap-3">
-                <div><Label>Joining date</Label><Input type="date" value={editForm.joining_date} onChange={(e) => setEditForm(s => ({ ...s, joining_date: e.target.value }))} /></div>
-                <div><Label>Aadhaar number</Label><Input value={editForm.aadhaar_number} onChange={(e) => setEditForm(s => ({ ...s, aadhaar_number: e.target.value }))} maxLength={32} autoComplete="off" /></div>
-              </div>
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <div><Label>Joining date</Label><Input type="date" value={editForm.joining_date} onChange={(e) => setEditForm(s => ({ ...s, joining_date: e.target.value }))} /></div>
+                  <div><Label>Aadhaar number</Label><Input value={editForm.aadhaar_number} onChange={(e) => setEditForm(s => ({ ...s, aadhaar_number: e.target.value }))} maxLength={32} autoComplete="off" /></div>
+                </div>
+                <div className="space-y-2 rounded-lg border border-border p-3">
+                  <div className="text-xs text-muted-foreground">Employee documents are stored in the Company Vault and restricted to Founders and Admins.</div>
+                  <div>
+                    <Label>Aadhaar document</Label>
+                    <Input type="file" accept={EMPLOYEE_DOCUMENT_ACCEPT} onChange={(e) => { setEditForm(s => ({ ...s, aadhaar_document_file: e.target.files?.[0] || null })); e.target.value = ""; }} />
+                  </div>
+                  <div>
+                    <Label>Offer letter</Label>
+                    <Input type="file" accept={EMPLOYEE_DOCUMENT_ACCEPT} onChange={(e) => { setEditForm(s => ({ ...s, offer_letter_document_file: e.target.files?.[0] || null })); e.target.value = ""; }} />
+                  </div>
+                  <div>
+                    <Label>Other employee documents</Label>
+                    <Input type="file" multiple accept={EMPLOYEE_DOCUMENT_ACCEPT} onChange={(e) => { setEditForm(s => ({ ...s, other_document_files: Array.from(e.target.files || []) })); e.target.value = ""; }} />
+                  </div>
+                </div>
+              </>
             )}
           </div>
           <DialogFooter>
