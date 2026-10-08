@@ -20,6 +20,7 @@ from auth_utils import get_current_user, require_roles, hash_password
 from models import UserPublic
 from models_part2 import (
     DepartmentIn, EmployeeInviteIn, EmployeeUpdateIn, AttendanceIn, LeaveIn, LeaveDecisionIn, PerformanceIn,
+    SubmittedDetailsIn, CompanyDetailsIn,
 )
 from hub_utils import serialize, serialize_many, oid, utc_iso, log_activity, notify
 from permissions import can
@@ -43,6 +44,9 @@ REAL_USERS = {"password_hash": {"$nin": ["", None]}}
 # Profile fields anyone may edit on their own account vs. fields managed by the org.
 SELF_FIELDS = {"name", "phone", "photo"}
 ORG_FIELDS = SELF_FIELDS | {"designation", "department", "role"}
+
+# Roles that may see and edit everything in an employee's details profile.
+ADMIN_ROLES = ("Founder", "Admin")
 
 
 # ============================================================
@@ -926,6 +930,147 @@ async def update_employee(
         await notify(db, str(target["_id"]), "Your role was updated",
                      f"{current.name} changed your role to {changes['role']}.", kind="info", link="/settings")
     return serialize(doc)
+
+
+# ============================================================
+# EMPLOYEE PROFILE (details submitted by employee + details given by company)
+# ============================================================
+
+def _can_view_profile(current: UserPublic, target: dict) -> bool:
+    if str(target["_id"]) == current.id or current.role in ADMIN_ROLES:
+        return True
+    return current.role == "Manager" and _same_department(current, target)
+
+
+def _profile_out(doc: dict | None, current: UserPublic, target: dict) -> dict:
+    is_self = str(target["_id"]) == current.id
+    is_admin = current.role in ADMIN_ROLES
+    stored = doc or {}
+
+    submitted = {**SubmittedDetailsIn().model_dump(mode="json"), **(stored.get("submitted") or {})}
+    company = {**CompanyDetailsIn().model_dump(mode="json"), **(stored.get("company") or {})}
+
+    # Managers see the profile, but not the sensitive parts.
+    if not (is_self or is_admin):
+        company["stipend_or_salary"] = None
+        submitted["bank_account_last4"] = None
+        submitted["id_proof_url"] = None
+
+    return {
+        "employee_id": str(target["_id"]),
+        "name": target.get("name"),
+        "email": target.get("email"),
+        "role": target.get("role"),
+        "designation": target.get("designation"),
+        "department": target.get("department"),
+        "submitted": submitted,
+        "company": company,
+        "can_edit_submitted": is_self or is_admin,
+        "can_edit_company": is_admin,
+        "updated_at": stored.get("updated_at"),
+    }
+
+
+@router.get("/{employee_id}/profile")
+async def get_employee_profile(
+    employee_id: str,
+    current: UserPublic = Depends(get_current_user),
+):
+    db = get_db()
+    target = await _get_employee(db, employee_id)
+
+    if not _can_view_profile(current, target):
+        raise HTTPException(403, "You are not allowed to view this profile")
+
+    doc = await db.employee_profiles.find_one({"employee_id": str(target["_id"])})
+    return _profile_out(doc, current, target)
+
+
+@router.put("/{employee_id}/profile/submitted")
+async def update_submitted_details(
+    employee_id: str,
+    payload: SubmittedDetailsIn,
+    current: UserPublic = Depends(get_current_user),
+):
+    """Details the employee fills in about themselves. Editable by the employee or Founder/Admin."""
+    db = get_db()
+    target = await _get_employee(db, employee_id)
+    is_self = str(target["_id"]) == current.id
+
+    if not (is_self or current.role in ADMIN_ROLES):
+        raise HTTPException(403, "Only the employee or an admin can edit these details")
+
+    data = payload.model_dump(mode="json", exclude_unset=True)
+    for key, value in list(data.items()):
+        if isinstance(value, str):
+            value = value.strip() or None
+            data[key] = value
+
+    last4 = data.get("bank_account_last4")
+    if last4 and (not last4.isdigit() or len(last4) != 4):
+        raise HTTPException(400, "Enter only the last 4 digits of the bank account")
+
+    if not data:
+        raise HTTPException(400, "Nothing to update")
+
+    now = utc_iso()
+    await db.employee_profiles.update_one(
+        {"employee_id": str(target["_id"])},
+        {
+            "$set": {**{f"submitted.{k}": v for k, v in data.items()}, "updated_at": now},
+            "$setOnInsert": {"created_at": now},
+        },
+        upsert=True,
+    )
+
+    await log_activity(db, current, "Updated employee details", "Employees", target=target["name"],
+                       meta={"section": "submitted", "fields": sorted(data)})
+
+    doc = await db.employee_profiles.find_one({"employee_id": str(target["_id"])})
+    return _profile_out(doc, current, target)
+
+
+@router.patch("/{employee_id}/profile/company")
+async def update_company_details(
+    employee_id: str,
+    payload: CompanyDetailsIn,
+    current: UserPublic = Depends(require_roles("Founder", "Admin")),
+):
+    """Details the company records for an employee. Founder/Admin only."""
+    db = get_db()
+    target = await _get_employee(db, employee_id)
+
+    data = payload.model_dump(mode="json", exclude_unset=True)
+    for key, value in list(data.items()):
+        if isinstance(value, str):
+            data[key] = value.strip() or None
+
+    if data.get("stipend_or_salary") is not None and data["stipend_or_salary"] < 0:
+        raise HTTPException(400, "Stipend / salary cannot be negative")
+
+    if not data:
+        raise HTTPException(400, "Nothing to update")
+
+    now = utc_iso()
+    await db.employee_profiles.update_one(
+        {"employee_id": str(target["_id"])},
+        {
+            "$set": {**{f"company.{k}": v for k, v in data.items()}, "updated_at": now,
+                     "company_updated_by": current.id},
+            "$setOnInsert": {"created_at": now},
+        },
+        upsert=True,
+    )
+
+    await log_activity(db, current, "Updated company details", "Employees", target=target["name"],
+                       meta={"section": "company", "fields": sorted(data)})
+
+    if str(target["_id"]) != current.id:
+        await notify(db, str(target["_id"]), "Your employment details were updated",
+                     f"{current.name} updated your company details.", kind="info", link="/employees")
+
+    doc = await db.employee_profiles.find_one({"employee_id": str(target["_id"])})
+    return _profile_out(doc, current, target)
 
 
 # ============================================================

@@ -28,6 +28,7 @@ export function AuthProvider({ children }) {
     try {
       const { data } = await api.post("/auth/login", { email, password, remember });
       tokens.set(data.access_token, data.refresh_token);
+      localStorage.setItem("wavygo_login_at", String(Date.now()));
       setUser(data.user);
       return { ok: true };
     } catch (e) {
@@ -38,8 +39,11 @@ export function AuthProvider({ children }) {
   async function logout() {
     // Send the refresh token so the server revokes this session
     try { await api.post("/auth/logout", { refresh_token: tokens.refresh }); } catch { /* ignore */ }
-    tokens.clear();
-    setUser(false);
+    finally {
+      tokens.clear();
+      localStorage.removeItem("wavygo_login_at");
+      setUser(false);
+    }
   }
 
   async function refreshMe() {

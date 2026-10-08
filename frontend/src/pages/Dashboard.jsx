@@ -39,11 +39,11 @@ const KPI_ICONS = {
 
 // Visual treatment per live service status reported by /dashboard/stats.
 const STATUS_STYLE = {
-  operational:    { label: "Operational",    text: "text-success",          dot: "bg-success",          badge: "bg-success/10 text-success hover:bg-success/10" },
-  degraded:       { label: "Degraded",       text: "text-warning",          dot: "bg-warning",          badge: "bg-warning/10 text-warning hover:bg-warning/10" },
-  not_configured: { label: "Not configured", text: "text-warning",          dot: "bg-warning",          badge: "bg-warning/10 text-warning hover:bg-warning/10" },
-  down:           { label: "Down",           text: "text-destructive",      dot: "bg-destructive",      badge: "bg-destructive/10 text-destructive hover:bg-destructive/10" },
-  idle:           { label: "Idle",           text: "text-muted-foreground", dot: "bg-muted-foreground", badge: "bg-muted text-muted-foreground hover:bg-muted" },
+  operational: { label: "Operational", text: "text-success", dot: "bg-success", badge: "bg-success/10 text-success hover:bg-success/10" },
+  degraded: { label: "Degraded", text: "text-warning", dot: "bg-warning", badge: "bg-warning/10 text-warning hover:bg-warning/10" },
+  not_configured: { label: "Not configured", text: "text-warning", dot: "bg-warning", badge: "bg-warning/10 text-warning hover:bg-warning/10" },
+  down: { label: "Down", text: "text-destructive", dot: "bg-destructive", badge: "bg-destructive/10 text-destructive hover:bg-destructive/10" },
+  idle: { label: "Idle", text: "text-muted-foreground", dot: "bg-muted-foreground", badge: "bg-muted text-muted-foreground hover:bg-muted" },
 };
 
 // Shown only when the role can open the target module and complete the action (first four that pass).
@@ -227,7 +227,7 @@ export default function Dashboard() {
           {data.upcoming_events.map((e) => (
             <li key={e.id}>
               <button onClick={() => nav(e.link || "/calendar")} data-testid={`upcoming-event-${e.id}`}
-                      className="w-full flex items-start gap-3 text-left rounded-md hover:bg-muted/50 transition-colors">
+                className="w-full flex items-start gap-3 text-left rounded-md hover:bg-muted/50 transition-colors">
                 <div className="h-9 w-9 rounded-md bg-info/10 text-info flex items-center justify-center shrink-0">
                   <Circle className="h-2.5 w-2.5 fill-info" />
                 </div>
@@ -431,7 +431,7 @@ export default function Dashboard() {
                   </span>
                   <div className="min-w-0 flex-1">
                     <button type="button" onClick={() => nav(`/task-board?task_id=${t.id}`)} data-testid={`dashboard-task-${t.id}`}
-                            className="text-left text-[13.5px] leading-tight text-foreground hover:text-primary hover:underline">{t.title}</button>
+                      className="text-left text-[13.5px] leading-tight text-foreground hover:text-primary hover:underline">{t.title}</button>
                     <div className={cn("text-[11px] mt-1", t.overdue ? "text-destructive" : "text-muted-foreground")}>
                       {t.overdue ? "Overdue" : "Due"} · {formatDue(t.due)}{t.assignee_name ? ` · ${t.assignee_name}` : ""}
                     </div>
@@ -459,7 +459,7 @@ export default function Dashboard() {
                   const Icon = a.icon;
                   return (
                     <button key={a.label} onClick={() => nav(a.to)}
-                            className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-[13px] text-foreground hover:border-primary/40 hover:bg-primary/[0.03] transition-colors">
+                      className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-[13px] text-foreground hover:border-primary/40 hover:bg-primary/[0.03] transition-colors">
                       <Icon className="h-4 w-4 text-primary" />{a.label}
                     </button>
                   );
@@ -546,87 +546,87 @@ export default function Dashboard() {
       {/* ------------------ Part 2: Vendor performance + Company Health + System status ------------------ */}
       {/* Skipped entirely when empty (Employee/Intern), so it doesn't add a blank gap. */}
       {((showMarketplace && data.vendor_perf?.length > 0) || data.company_health) && (
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {showMarketplace && data.vendor_perf && data.vendor_perf.length > 0 && (
-          <Card data-testid="vendor-performance" className="lg:col-span-2 border-border">
-            <CardHeader className="pb-2">
-              <div className="flex items-start justify-between">
-                <div>
-                  <CardTitle className="font-display text-[17px]">Vendor performance</CardTitle>
-                  <CardDescription>Top vendors by fleet size and rating</CardDescription>
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          {showMarketplace && data.vendor_perf && data.vendor_perf.length > 0 && (
+            <Card data-testid="vendor-performance" className="lg:col-span-2 border-border">
+              <CardHeader className="pb-2">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <CardTitle className="font-display text-[17px]">Vendor performance</CardTitle>
+                    <CardDescription>Top vendors by fleet size and rating</CardDescription>
+                  </div>
+                  <Button variant="ghost" size="sm" onClick={() => nav("/marketplace")} className="text-xs">Open marketplace</Button>
                 </div>
-                <Button variant="ghost" size="sm" onClick={() => nav("/marketplace")} className="text-xs">Open marketplace</Button>
-              </div>
-            </CardHeader>
-            <CardContent className="pt-2">
-              <Table>
-                <TableHeader>
-                  <TableRow className="border-border hover:bg-transparent">
-                    <TableHead className="text-[11px] uppercase tracking-[0.1em]">Vendor</TableHead>
-                    <TableHead className="text-[11px] uppercase tracking-[0.1em]">City</TableHead>
-                    <TableHead className="text-[11px] uppercase tracking-[0.1em] text-right">Vehicles</TableHead>
-                    <TableHead className="text-[11px] uppercase tracking-[0.1em] text-right">Rating</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {data.vendor_perf.map((v) => (
-                    <TableRow key={v.vendor} className="border-border">
-                      <TableCell className="font-medium">{v.vendor}</TableCell>
-                      <TableCell className="text-muted-foreground">{v.city}</TableCell>
-                      <TableCell className="text-right">{v.vehicles}</TableCell>
-                      <TableCell className="text-right">
-                        <span className="inline-flex items-center gap-1 text-warning font-medium">
-                          <Star className="h-3 w-3 fill-warning" /> {v.rating ?? "—"}
-                        </span>
-                      </TableCell>
+              </CardHeader>
+              <CardContent className="pt-2">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="border-border hover:bg-transparent">
+                      <TableHead className="text-[11px] uppercase tracking-[0.1em]">Vendor</TableHead>
+                      <TableHead className="text-[11px] uppercase tracking-[0.1em]">City</TableHead>
+                      <TableHead className="text-[11px] uppercase tracking-[0.1em] text-right">Vehicles</TableHead>
+                      <TableHead className="text-[11px] uppercase tracking-[0.1em] text-right">Rating</TableHead>
                     </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </CardContent>
-          </Card>
-        )}
+                  </TableHeader>
+                  <TableBody>
+                    {data.vendor_perf.map((v) => (
+                      <TableRow key={v.vendor} className="border-border">
+                        <TableCell className="font-medium">{v.vendor}</TableCell>
+                        <TableCell className="text-muted-foreground">{v.city}</TableCell>
+                        <TableCell className="text-right">{v.vehicles}</TableCell>
+                        <TableCell className="text-right">
+                          <span className="inline-flex items-center gap-1 text-warning font-medium">
+                            <Star className="h-3 w-3 fill-warning" /> {v.rating ?? "—"}
+                          </span>
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          )}
 
-        {data.company_health && (
-          <Card data-testid="company-health" className="border-border">
-            <CardHeader className="pb-2">
-              <div className="flex items-start justify-between">
-                <div>
-                  <CardTitle className="font-display text-[17px]">Company health</CardTitle>
-                  <CardDescription>Composite operational score</CardDescription>
+          {data.company_health && (
+            <Card data-testid="company-health" className="border-border">
+              <CardHeader className="pb-2">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <CardTitle className="font-display text-[17px]">Company health</CardTitle>
+                    <CardDescription>Composite operational score</CardDescription>
+                  </div>
+                  <Shield className="h-4 w-4 text-muted-foreground" />
                 </div>
-                <Shield className="h-4 w-4 text-muted-foreground" />
-              </div>
-            </CardHeader>
-            <CardContent className="pt-2">
-              <div className="flex items-baseline gap-2">
-                <div className="font-display text-4xl font-semibold text-foreground tracking-tighter">{data.company_health.score ?? "—"}</div>
-                <div className="text-xs text-muted-foreground">/ 100</div>
-              </div>
-              <Progress value={data.company_health.score ?? 0} className="h-1.5 mt-2" />
-              {data.company_health.signals.length === 0 && (
-                <div className="mt-4 text-[12.5px] text-muted-foreground">Not enough data to score yet.</div>
-              )}
-              <ul className="mt-4 space-y-2">
-                {data.company_health.signals.map((s) => (
-                  <li key={s.label} className="flex items-center justify-between text-[12.5px]">
-                    <span className="text-muted-foreground">{s.label}</span>
-                    <div className="flex items-center gap-2 w-1/2">
-                      <Progress value={s.value} className="h-1 flex-1" />
-                      <span className="font-medium text-foreground w-8 text-right">{s.value}</span>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-              <div className="mt-4 pt-3 border-t border-border grid grid-cols-3 gap-2 text-center">
-                <div><div className="text-[10px] uppercase text-muted-foreground">KYC</div><div className="text-[13px] font-semibold">{data.company_health.flags.kyc_pending ?? "—"}</div></div>
-                <div><div className="text-[10px] uppercase text-muted-foreground">Tickets</div><div className="text-[13px] font-semibold">{data.company_health.flags.open_tickets ?? "—"}</div></div>
-                <div><div className="text-[10px] uppercase text-muted-foreground">Leave</div><div className="text-[13px] font-semibold">{data.company_health.flags.pending_leave}</div></div>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-      </div>
+              </CardHeader>
+              <CardContent className="pt-2">
+                <div className="flex items-baseline gap-2">
+                  <div className="font-display text-4xl font-semibold text-foreground tracking-tighter">{data.company_health.score ?? "—"}</div>
+                  <div className="text-xs text-muted-foreground">/ 100</div>
+                </div>
+                <Progress value={data.company_health.score ?? 0} className="h-1.5 mt-2" />
+                {data.company_health.signals.length === 0 && (
+                  <div className="mt-4 text-[12.5px] text-muted-foreground">Not enough data to score yet.</div>
+                )}
+                <ul className="mt-4 space-y-2">
+                  {data.company_health.signals.map((s) => (
+                    <li key={s.label} className="flex items-center justify-between text-[12.5px]">
+                      <span className="text-muted-foreground">{s.label}</span>
+                      <div className="flex items-center gap-2 w-1/2">
+                        <Progress value={s.value} className="h-1 flex-1" />
+                        <span className="font-medium text-foreground w-8 text-right">{s.value}</span>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+                <div className="mt-4 pt-3 border-t border-border grid grid-cols-3 gap-2 text-center">
+                  <div><div className="text-[10px] uppercase text-muted-foreground">KYC</div><div className="text-[13px] font-semibold">{data.company_health.flags.kyc_pending ?? "—"}</div></div>
+                  <div><div className="text-[10px] uppercase text-muted-foreground">Tickets</div><div className="text-[13px] font-semibold">{data.company_health.flags.open_tickets ?? "—"}</div></div>
+                  <div><div className="text-[10px] uppercase text-muted-foreground">Leave</div><div className="text-[13px] font-semibold">{data.company_health.flags.pending_leave}</div></div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
       )}
 
       {/* ------------------ Part 2: Live system status + Recent notifications ------------------ */}
@@ -690,17 +690,17 @@ export default function Dashboard() {
                   return (
                     <li key={n.id}>
                       <button type="button" onClick={() => openNotification(n)} data-testid={`dashboard-notification-${n.id}`}
-                              className="w-full flex items-start gap-3 text-left rounded-md hover:bg-muted/50 transition-colors">
-                      <div className={cn("h-8 w-8 rounded-md flex items-center justify-center shrink-0", kindClass)}>
-                        <Icon className="h-4 w-4" />
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <div className="flex items-baseline gap-2">
-                          <div className="text-[13px] font-medium truncate">{n.title}</div>
-                          {!n.read && <span className="h-1.5 w-1.5 rounded-full bg-primary shrink-0" />}
+                        className="w-full flex items-start gap-3 text-left rounded-md hover:bg-muted/50 transition-colors">
+                        <div className={cn("h-8 w-8 rounded-md flex items-center justify-center shrink-0", kindClass)}>
+                          <Icon className="h-4 w-4" />
                         </div>
-                        <p className="text-[12px] text-muted-foreground line-clamp-1 mt-0.5">{n.body}</p>
-                      </div>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-baseline gap-2">
+                            <div className="text-[13px] font-medium truncate">{n.title}</div>
+                            {!n.read && <span className="h-1.5 w-1.5 rounded-full bg-primary shrink-0" />}
+                          </div>
+                          <p className="text-[12px] text-muted-foreground line-clamp-1 mt-0.5">{n.body}</p>
+                        </div>
                       </button>
                     </li>
                   );

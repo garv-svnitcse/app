@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Search, Plus, Bell, Sun, Moon, LogOut, Menu, User as UserIcon, Settings as SettingsIcon } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
+import { useLoggedTime } from "@/hooks/useLoggedTime";
 import { useTheme } from "@/contexts/ThemeContext";
 import { SHELL } from "@/constants/testIds";
 import { api } from "@/lib/api";
@@ -37,6 +38,7 @@ export function TopNav({ onOpenMenu }) {
   const { can, canViewModule } = usePermission();
   const { theme, toggle } = useTheme();
   const navigate = useNavigate();
+  const loggedTime = useLoggedTime();
   const [searchOpen, setSearchOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [createOpen, setCreateOpen] = useState(false);
@@ -93,6 +95,13 @@ export function TopNav({ onOpenMenu }) {
             {greeting()}, {first} <span className="text-muted-foreground font-normal">·</span> <span className="text-primary">WavyGo OS</span>
           </span>
         </div>
+
+        {loggedTime && (
+          <div className="hidden sm:flex items-center gap-1.5 text-[12px] text-muted-foreground font-mono tabular-nums">
+            <span>⏱</span>
+            <span>{loggedTime.formatted}</span>
+          </div>
+        )}
 
         <div className="flex-1" />
 

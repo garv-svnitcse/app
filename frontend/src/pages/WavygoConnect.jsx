@@ -22,7 +22,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { usePermission } from "@/hooks/usePermission";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
-import { formatDistanceToNow } from "date-fns";
+import { formatChatTime, formatChatTimeFull, formatDateSeparator } from "@/lib/chatTime";
 
 const KIND_ICON = { channel: Hash, dm: MessagesSquare, group: Users2, announcement: Megaphone };
 const KIND_LABEL = { channel: "Channel", group: "Group", announcement: "Announcement channel" };
@@ -125,6 +125,7 @@ export default function WavygoConnect() {
   const withinWindow = (m) => !m.editable_until || new Date(m.editable_until).getTime() > now;
   const minutesLeft = (m) => (m.editable_until ? Math.max(1, Math.ceil((new Date(m.editable_until).getTime() - now) / 60000)) : null);
   const [text, setText] = useState("");
+  const [file, setFile] = useState(null);       // future: file attachment for chat messages
   const [createOpen, setCreateOpen] = useState(false);
   const [dmOpen, setDmOpen] = useState(false);
   const [dmSearch, setDmSearch] = useState("");
@@ -468,7 +469,14 @@ export default function WavygoConnect() {
     if (!text.trim() || !activeId || sendingRef.current) return;
     sendingRef.current = true;
     try {
-      await api.post(`/connect/channels/${activeId}/messages`, { body: text.trim() });
+      let attachments = [];
+      if (file) {
+        const fd = new FormData();
+        fd.append("file", file); // must match the backend parameter name "file"
+        const { data: up } = await api.post("/connect/upload", fd);
+        attachments = [up.url];
+      }
+      await api.post(`/connect/channels/${activeId}/messages`, { body: text.trim(), attachments });
       setText("");
       loadMessages(activeId, { scroll: true });
       loadChannels(null, true);
@@ -716,7 +724,7 @@ export default function WavygoConnect() {
 
               <div ref={scrollRef} className="flex-1 overflow-y-auto scrollbar-thin px-5 py-4 space-y-4 min-h-[300px] max-h-[520px]">
                 {messages.length === 0 && <div className="text-center text-sm text-muted-foreground py-16">No messages yet. Say hello 👋</div>}
-                {messages.map(m => {
+                {messages.map((m, idx) => {
                   const mine = m.sender_id === user?.id;
                   const open = withinWindow(m);
                   const canEditMsg = mine && !m.deleted && open;

@@ -1,0 +1,122 @@
+[33mcommit 7fe7213b6d4b68c7bbbe15a749baf5d52cbe0f28[m
+Author: Amritansh <sainiamritansh99@gmail.com>
+Date:   Fri Oct 2 22:43:16 2026 +0530
+
+    feat(erp): add logged-in time timer in TopNav
+
+[1mdiff --git a/frontend/src/components/layout/TopNav.jsx b/frontend/src/components/layout/TopNav.jsx[m
+[1mindex d6eb4fb..a989abf 100644[m
+[1m--- a/frontend/src/components/layout/TopNav.jsx[m
+[1m+++ b/frontend/src/components/layout/TopNav.jsx[m
+[36m@@ -2,6 +2,7 @@[m [mimport { useEffect, useState } from "react";[m
+ import { useNavigate } from "react-router-dom";[m
+ import { Search, Plus, Bell, Sun, Moon, LogOut, Menu, User as UserIcon, Settings as SettingsIcon } from "lucide-react";[m
+ import { useAuth } from "@/contexts/AuthContext";[m
+[32m+[m[32mimport { useLoggedTime } from "@/hooks/useLoggedTime";[m
+ import { useTheme } from "@/contexts/ThemeContext";[m
+ import { SHELL } from "@/constants/testIds";[m
+ import { api } from "@/lib/api";[m
+[36m@@ -37,6 +38,7 @@[m [mexport function TopNav({ onOpenMenu }) {[m
+   const { can, canViewModule } = usePermission();[m
+   const { theme, toggle } = useTheme();[m
+   const navigate = useNavigate();[m
+[32m+[m[32m  const loggedTime = useLoggedTime();[m
+   const [searchOpen, setSearchOpen] = useState(false);[m
+   const [notifOpen, setNotifOpen] = useState(false);[m
+   const [createOpen, setCreateOpen] = useState(false);[m
+[36m@@ -94,6 +96,13 @@[m [mexport function TopNav({ onOpenMenu }) {[m
+           </span>[m
+         </div>[m
+ [m
+[32m+[m[32m        {loggedTime && ([m
+[32m+[m[32m          <div className="hidden sm:flex items-center gap-1.5 text-[12px] text-muted-foreground font-mono tabular-nums">[m
+[32m+[m[32m            <span>⏱</span>[m
+[32m+[m[32m            <span>{loggedTime.formatted}</span>[m
+[32m+[m[32m          </div>[m
+[32m+[m[32m        )}[m
+[32m+[m
+         <div className="flex-1" />[m
+ [m
+         {/* Search */}[m
+[1mdiff --git a/frontend/src/contexts/AuthContext.jsx b/frontend/src/contexts/AuthContext.jsx[m
+[1mindex ad47b46..35ebac2 100644[m
+[1m--- a/frontend/src/contexts/AuthContext.jsx[m
+[1m+++ b/frontend/src/contexts/AuthContext.jsx[m
+[36m@@ -28,6 +28,7 @@[m [mexport function AuthProvider({ children }) {[m
+     try {[m
+       const { data } = await api.post("/auth/login", { email, password, remember });[m
+       tokens.set(data.access_token, data.refresh_token);[m
+[32m+[m[32m      localStorage.setItem("wavygo_login_at", String(Date.now()));[m
+       setUser(data.user);[m
+       return { ok: true };[m
+     } catch (e) {[m
+[36m@@ -38,8 +39,11 @@[m [mexport function AuthProvider({ children }) {[m
+   async function logout() {[m
+     // Send the refresh token so the server revokes this session[m
+     try { await api.post("/auth/logout", { refresh_token: tokens.refresh }); } catch { /* ignore */ }[m
+[31m-    tokens.clear();[m
+[31m-    setUser(false);[m
+[32m+[m[32m    finally {[m
+[32m+[m[32m      tokens.clear();[m
+[32m+[m[32m      localStorage.removeItem("wavygo_login_at");[m
+[32m+[m[32m      setUser(false);[m
+[32m+[m[32m    }[m
+   }[m
+ [m
+   async function refreshMe() {[m
+[36m@@ -54,4 +58,4 @@[m [mexport function useAuth() {[m
+   const ctx = useContext(AuthContext);[m
+   if (!ctx) throw new Error("useAuth must be used inside <AuthProvider>");[m
+   return ctx;[m
+[31m-}[m
+[32m+[m[32m}[m
+\ No newline at end of file[m
+[1mdiff --git a/frontend/src/hooks/useLoggedTime.js b/frontend/src/hooks/useLoggedTime.js[m
+[1mnew file mode 100644[m
+[1mindex 0000000..d649b21[m
+[1m--- /dev/null[m
+[1m+++ b/frontend/src/hooks/useLoggedTime.js[m
+[36m@@ -0,0 +1,43 @@[m
+[32m+[m[32mimport { useState, useEffect } from "react";[m
+[32m+[m
+[32m+[m[32mconst STORAGE_KEY = "wavygo_login_at";[m
+[32m+[m
+[32m+[m[32mfunction readLoginAt() {[m
+[32m+[m[32m  try {[m
+[32m+[m[32m    const raw = localStorage.getItem(STORAGE_KEY);[m
+[32m+[m[32m    if (raw == null) return null;[m
+[32m+[m[32m    const ts = Number(raw);[m
+[32m+[m[32m    if (!Number.isFinite(ts) || ts <= 0) return null;[m
+[32m+[m[32m    return ts;[m
+[32m+[m[32m  } catch {[m
+[32m+[m[32m    return null;[m
+[32m+[m[32m  }[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mfunction computeElapsed(loginAt) {[m
+[32m+[m[32m  if (loginAt == null) return null;[m
+[32m+[m[32m  const diff = Math.floor((Date.now() - loginAt) / 1000);[m
+[32m+[m[32m  if (diff < 0) return null;[m
+[32m+[m[32m  const h = Math.floor(diff / 3600);[m
+[32m+[m[32m  const m = Math.floor((diff % 3600) / 60);[m
+[32m+[m[32m  const s = diff % 60;[m
+[32m+[m[32m  const pad = (n) => String(n).padStart(2, "0");[m
+[32m+[m[32m  return { elapsed: diff, formatted: `${pad(h)}:${pad(m)}:${pad(s)}` };[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32m// Returns { elapsed, formatted } or null when the stored timestamp is[m
+[32m+[m[32m// missing, corrupt, negative, or in the future.[m
+[32m+[m[32mexport function useLoggedTime() {[m
+[32m+[m[32m  const [result, setResult] = useState(() => computeElapsed(readLoginAt()));[m
+[32m+[m
+[32m+[m[32m  useEffect(() => {[m
+[32m+[m[32m    const tick = () => setResult(computeElapsed(readLoginAt()));[m
+[32m+[m[32m    tick();[m
+[32m+[m[32m    const id = setInterval(tick, 1000);[m
+[32m+[m[32m    return () => clearInterval(id);[m
+[32m+[m[32m  }, []);[m
+[32m+[m
+[32m+[m[32m  return result;[m
+[32m+[m[32m}[m
+[32m+[m
+[32m+[m[32mexport default useLoggedTime;[m
