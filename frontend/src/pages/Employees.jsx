@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Users, Plus, UserPlus, Building2, CalendarDays, Award, KeyRound, Mail, Copy, Check, Trash2, Pencil, Power, UserMinus, CheckCircle2, Loader2, Eye, EyeOff, Sparkles, Send, ShieldCheck, ArrowLeft, Clock, LogIn, LogOut, ClipboardList } from "lucide-react";
+import { Users, Plus, UserPlus, Building2, CalendarDays, Award, KeyRound, Mail, Copy, Check, Trash2, Pencil, Power, UserMinus, CheckCircle2, Loader2, Eye, EyeOff, Sparkles, Send, ShieldCheck, ArrowLeft, Clock, LogIn, LogOut, ClipboardList, Upload, FileText } from "lucide-react";
 import { useLiveRefresh } from "@/hooks/useLiveRefresh";
 import { api, formatApiError } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
@@ -218,6 +218,104 @@ function DetailsSection({ title, subtitle, fields, values, editable, onSave }) {
   );
 }
 
+function DocumentUpload({
+  employeeId,
+  section,
+  documentType,
+  label,
+  multiple = false,
+  editable,
+  onUploaded,
+}) {
+  const [uploading, setUploading] = useState(false);
+
+  async function handleUpload(e) {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+
+    setUploading(true);
+
+    try {
+      for (const file of files) {
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("section", section);
+        formData.append("document_type", documentType);
+
+        const { data } = await api.post(
+          `/employees/${employeeId}/profile/document`,
+          formData
+        );
+
+        onUploaded(data.profile);
+      }
+
+      toast.success(
+        files.length === 1
+          ? `${label} uploaded successfully`
+          : `${files.length} documents uploaded successfully`
+      );
+    } catch (e) {
+      toast.error(formatApiError(e));
+    } finally {
+      setUploading(false);
+      e.target.value = "";
+    }
+  }
+
+  if (!editable) return null;
+
+  return (
+    <div className="mt-3 rounded-lg border border-dashed border-border p-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="text-xs font-medium flex items-center gap-1.5">
+            <FileText className="h-3.5 w-3.5 text-muted-foreground" />
+            {label}
+          </div>
+          {multiple && (
+            <div className="text-[11px] text-muted-foreground mt-0.5">
+              You can select multiple files.
+            </div>
+          )}
+        </div>
+
+        <label className="shrink-0">
+          <input
+            type="file"
+            className="hidden"
+            multiple={multiple}
+            onChange={handleUpload}
+            disabled={uploading}
+          />
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-8 text-xs"
+            disabled={uploading}
+            asChild
+          >
+            <span>
+              {uploading ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+                  Uploading...
+                </>
+              ) : (
+                <>
+                  <Upload className="h-3.5 w-3.5 mr-1.5" />
+                  {multiple ? "Choose files" : "Upload"}
+                </>
+              )}
+            </span>
+          </Button>
+        </label>
+      </div>
+    </div>
+  );
+}
+
 function EmployeeDetailsDialog({ employee, onClose }) {
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -249,6 +347,10 @@ function EmployeeDetailsDialog({ employee, onClose }) {
   async function saveCompany(changes) {
     const { data } = await api.patch(`/employees/${employeeId}/profile/company`, changes);
     setProfile(data);
+  }
+
+  function handleDocumentUploaded(updatedProfile) {
+    setProfile(updatedProfile);
   }
 
   return (
@@ -289,6 +391,47 @@ function EmployeeDetailsDialog({ employee, onClose }) {
               editable={profile.can_edit_submitted}
               onSave={saveSubmitted}
             />
+
+            {profile.can_edit_submitted && (
+              <Card className="border-border">
+                <CardHeader className="pb-3">
+                  <CardTitle className="font-display text-[14px]">
+                    Employee documents
+                  </CardTitle>
+                  <div className="text-[11.5px] text-muted-foreground mt-0.5">
+                    Upload documents submitted by the employee.
+                  </div>
+                </CardHeader>
+                <CardContent className="pt-0 space-y-2">
+                  <DocumentUpload
+                    employeeId={employeeId}
+                    section="submitted"
+                    documentType="resume"
+                    label="Resume"
+                    editable={profile.can_edit_submitted}
+                    onUploaded={handleDocumentUploaded}
+                  />
+                  <DocumentUpload
+                    employeeId={employeeId}
+                    section="submitted"
+                    documentType="id_proof"
+                    label="ID Proof"
+                    editable={profile.can_edit_submitted}
+                    onUploaded={handleDocumentUploaded}
+                  />
+                  <DocumentUpload
+                    employeeId={employeeId}
+                    section="submitted"
+                    documentType="other"
+                    label="Other Documents"
+                    multiple
+                    editable={profile.can_edit_submitted}
+                    onUploaded={handleDocumentUploaded}
+                  />
+                </CardContent>
+              </Card>
+            )}
+
             <DetailsSection
               title="Provided by company"
               subtitle="Details the company has recorded for this employee."
@@ -297,6 +440,46 @@ function EmployeeDetailsDialog({ employee, onClose }) {
               editable={profile.can_edit_company}
               onSave={saveCompany}
             />
+
+            {profile.can_edit_company && (
+              <Card className="border-border">
+                <CardHeader className="pb-3">
+                  <CardTitle className="font-display text-[14px]">
+                    Company documents
+                  </CardTitle>
+                  <div className="text-[11.5px] text-muted-foreground mt-0.5">
+                    Upload documents provided by the company.
+                  </div>
+                </CardHeader>
+                <CardContent className="pt-0 space-y-2">
+                  <DocumentUpload
+                    employeeId={employeeId}
+                    section="company"
+                    documentType="offer_letter"
+                    label="Offer Letter"
+                    editable={profile.can_edit_company}
+                    onUploaded={handleDocumentUploaded}
+                  />
+                  <DocumentUpload
+                    employeeId={employeeId}
+                    section="company"
+                    documentType="employment_agreement"
+                    label="Employment Agreement"
+                    editable={profile.can_edit_company}
+                    onUploaded={handleDocumentUploaded}
+                  />
+                  <DocumentUpload
+                    employeeId={employeeId}
+                    section="company"
+                    documentType="other"
+                    label="Other Documents"
+                    multiple
+                    editable={profile.can_edit_company}
+                    onUploaded={handleDocumentUploaded}
+                  />
+                </CardContent>
+              </Card>
+            )}
           </div>
         )}
 

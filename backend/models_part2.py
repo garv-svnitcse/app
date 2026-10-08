@@ -367,27 +367,35 @@ class CalendarEventPatch(BaseModel):
 class CalendarRsvpIn(BaseModel):
     response: RsvpResponse
 
+
 class SubmittedDetailsIn(BaseModel):
     phone: Optional[str] = None
     personal_email: Optional[str] = None
-    date_of_birth: Optional[str] = None          # YYYY-MM-DD
+    date_of_birth: Optional[str] = None
     address: Optional[str] = None
     emergency_contact_name: Optional[str] = None
     emergency_contact_relation: Optional[str] = None
     emergency_contact_phone: Optional[str] = None
     college: Optional[str] = None
     degree: Optional[str] = None
+
     resume_url: Optional[str] = None
     id_proof_url: Optional[str] = None
-    bank_account_last4: Optional[str] = None     # last 4 digits only, never the full number
+    other_documents: List[dict] = Field(default_factory=list)
+
+    bank_account_last4: Optional[str] = None
 
 
 class CompanyDetailsIn(BaseModel):
     employee_code: Optional[str] = None
     reporting_manager: Optional[str] = None
-    joining_date: Optional[str] = None           # YYYY-MM-DD
-    employment_type: Optional[str] = None        # Intern / Full-time / Contract
+    joining_date: Optional[str] = None
+    employment_type: Optional[str] = None
     stipend_or_salary: Optional[float] = None
+
     offer_letter_url: Optional[str] = None
+    employment_agreement_url: Optional[str] = None
+    other_documents: List[dict] = Field(default_factory=list)
+
     nda_signed: Optional[bool] = False
-    assigned_assets: Optional[str] = None        # e.g. "Laptop, ID card"    
+    assigned_assets: Optional[str] = None

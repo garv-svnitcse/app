@@ -16,7 +16,7 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription,
   AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { MessagesSquare, Hash, Users2, Megaphone, Plus, Send, Search, Lock, Building2, ShieldCheck, ShieldPlus, ShieldMinus, UserPlus, UserMinus, LogOut, Crown, Settings2, MoreHorizontal, Pencil, Trash2, Copy, Ban, Check, X } from "lucide-react";
+import { MessagesSquare, Hash, Users2, Megaphone, Plus, Send, Search, Lock, Building2, ShieldCheck, ShieldPlus, ShieldMinus, UserPlus, UserMinus, LogOut, Crown, Settings2, MoreHorizontal, Pencil, Trash2, Copy, Ban, Check, X, Paperclip, FileText } from "lucide-react";
 import { api, formatApiError } from "@/lib/api";
 import { useAuth } from "@/contexts/AuthContext";
 import { usePermission } from "@/hooks/usePermission";
@@ -102,6 +102,10 @@ function DepartmentPicker({ departments, selected, onChange }) {
   );
 }
 
+const IMG_RE = /\.(png|jpe?g|gif|webp|avif|svg)(\?.*)?$/i;
+const isImageUrl = (u) => IMG_RE.test(u || "");
+const fileNameFromUrl = (u) => decodeURIComponent((u || "").split("/").pop().split("?")[0]) || "file";
+
 export default function WavygoConnect() {
   const { user } = useAuth();
   const { can } = usePermission();
@@ -126,7 +130,20 @@ export default function WavygoConnect() {
   const withinWindow = (m) => !m.editable_until || new Date(m.editable_until).getTime() > now;
   const minutesLeft = (m) => (m.editable_until ? Math.max(1, Math.ceil((new Date(m.editable_until).getTime() - now) / 60000)) : null);
   const [text, setText] = useState("");
-  const [file, setFile] = useState(null);       // future: file attachment for chat messages
+  const [file, setFile] = useState(null);
+  const fileRef = useRef(null);
+  const [uploading, setUploading] = useState(false);
+
+  function pickFile(e) {
+    const f = e.target.files?.[0];
+    e.target.value = ""; // lets you pick the same file again
+    if (!f) return;
+    if (f.size > 10 * 1024 * 1024) {
+      toast.error("File too large (max 10 MB)");
+      return;
+    }
+    setFile(f);
+  }
   const [createOpen, setCreateOpen] = useState(false);
   const [dmOpen, setDmOpen] = useState(false);
   const [dmSearch, setDmSearch] = useState("");
@@ -433,8 +450,9 @@ export default function WavygoConnect() {
   }
 
   async function send() {
-    if (!text.trim() || !activeId || sendingRef.current) return;
+    if ((!text.trim() && !file) || !activeId || sendingRef.current) return;
     sendingRef.current = true;
+    setUploading(Boolean(file));
     try {
       let attachments = [];
       if (file) {
@@ -443,11 +461,20 @@ export default function WavygoConnect() {
         const { data: up } = await api.post("/connect/upload", fd);
         attachments = [up.url];
       }
-      await api.post(`/connect/channels/${activeId}/messages`, { body: text.trim(), attachments });
+      await api.post(`/connect/channels/${activeId}/messages`, {
+        body: text.trim() || (file ? `📎 ${file.name}` : ""),
+        attachments,
+      });
       setText("");
+      setFile(null);
       loadMessages(activeId, { scroll: true });
       loadChannels(null, true);
-    } catch (e) { toast.error(formatApiError(e)); } finally { sendingRef.current = false; }
+    } catch (e) {
+      toast.error(formatApiError(e));
+    } finally {
+      sendingRef.current = false;
+      setUploading(false);
+    }
   }
 
   const active = channels.find(c => c.id === activeId);
@@ -744,8 +771,21 @@ export default function WavygoConnect() {
                                 <Ban className="h-3.5 w-3.5" /> This message was deleted
                               </div>
                             ) : (
-                              <div className={cn("inline-block rounded-lg px-3 py-2 text-[13.5px] leading-relaxed whitespace-pre-wrap break-words text-left", mine ? "bg-primary text-primary-foreground" : "bg-muted text-foreground")}>
-                                {m.body}
+                              <div className={cn("inline-block rounded-lg px-3 py-2 text-[13.5px] leading-relaxed break-words text-left", mine ? "bg-primary text-primary-foreground" : "bg-muted text-foreground")}>
+                                {m.body && <div className="whitespace-pre-wrap">{m.body}</div>}
+                                {(m.attachments || []).map((url, i) => (
+                                  isImageUrl(url) ? (
+                                    <a key={i} href={url} target="_blank" rel="noreferrer" className="block mt-1.5">
+                                      <img src={url} alt="attachment" className="max-h-60 max-w-full rounded-md object-cover" />
+                                    </a>
+                                  ) : (
+                                    <a key={i} href={url} target="_blank" rel="noreferrer"
+                                       className="mt-1.5 flex items-center gap-2 rounded-md bg-black/10 px-2.5 py-1.5 text-[12.5px] underline-offset-2 hover:underline">
+                                      <FileText className="h-4 w-4 shrink-0" />
+                                      <span className="truncate">{fileNameFromUrl(url)}</span>
+                                    </a>
+                                  )
+                                ))}
                               </div>
                             )}
                             {!editing && !m.deleted && (
@@ -785,17 +825,36 @@ export default function WavygoConnect() {
               </div>
 
               {(active.kind !== "announcement" || canPostAnnouncement) && (
-                <div className="border-t border-border px-4 py-3 flex items-center gap-2">
-                  <Input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => {
-                           if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
-                           else if (e.key === "ArrowUp" && !text) {
-                             const last = [...messages].reverse().find((m) => m.sender_id === user?.id && !m.deleted && withinWindow(m));
-                             if (last) { e.preventDefault(); startEdit(last); }
-                           }
-                         }}
-                         placeholder={`Message ${active.kind === "dm" ? active.display_name || active.name : "#" + active.name}`}
-                         className="h-10" data-testid="connect-message-input" />
-                  <Button onClick={send} disabled={!text.trim()} data-testid="connect-send-btn"><Send className="h-4 w-4" /></Button>
+                <div className="border-t border-border px-4 py-3">
+                  {file && (
+                    <div className="mb-2 flex items-center gap-2 rounded-md border border-border bg-muted/60 px-3 py-1.5 text-[12.5px]">
+                      <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      <span className="flex-1 truncate">{file.name}</span>
+                      <button type="button" onClick={() => setFile(null)} aria-label="Remove file" className="text-muted-foreground hover:text-destructive">
+                        <X className="h-4 w-4" />
+                      </button>
+                    </div>
+                  )}
+                  <div className="flex items-center gap-2">
+                    <input ref={fileRef} type="file" hidden onChange={pickFile}
+                           accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.csv,.zip" data-testid="connect-file-input" />
+                    <Button type="button" variant="outline" size="icon" className="h-10 w-10 shrink-0"
+                            onClick={() => fileRef.current?.click()} disabled={uploading} title="Attach file" data-testid="connect-attach-btn">
+                      <Paperclip className="h-4 w-4" />
+                    </Button>
+                    <Input value={text} onChange={(e) => setText(e.target.value)} onKeyDown={(e) => {
+                             if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(); }
+                             else if (e.key === "ArrowUp" && !text) {
+                               const last = [...messages].reverse().find((m) => m.sender_id === user?.id && !m.deleted && withinWindow(m));
+                               if (last) { e.preventDefault(); startEdit(last); }
+                             }
+                           }}
+                           placeholder={`Message ${active.kind === "dm" ? active.display_name || active.name : "#" + active.name}`}
+                           className="h-10" data-testid="connect-message-input" />
+                    <Button onClick={send} disabled={(!text.trim() && !file) || uploading} data-testid="connect-send-btn">
+                      <Send className="h-4 w-4" />
+                    </Button>
+                  </div>
                 </div>
               )}
             </>

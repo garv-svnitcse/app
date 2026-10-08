@@ -602,12 +602,24 @@ async def list_messages(channel_id: str, limit: int = Query(100, ge=1, le=500),
 
 
 @router.post("/channels/{channel_id}/messages", status_code=201)
-async def send_message(channel_id: str, payload: MessageCreate, current: UserPublic = Depends(get_current_user)):
+async def send_message(
+    channel_id: str,
+    payload: MessageCreate,
+    current: UserPublic = Depends(get_current_user)
+):
     db = get_db()
+
     ch = await _visible_channel(db, channel_id, current)
+
     if ch["kind"] == "announcement" and current.role not in ("Founder", "Admin"):
-        raise HTTPException(403, "Only Founder or Admin can post in announcement channels")
-    attachments = []
+        raise HTTPException(
+            403,
+            "Only Founder or Admin can post in announcement channels"
+        )
+
+    # IMPORTANT:
+    # Keep the attachment URLs sent by the frontend.
+    attachments = payload.attachments or []
 
     doc = {
         "channel_id": channel_id,
@@ -620,17 +632,31 @@ async def send_message(channel_id: str, payload: MessageCreate, current: UserPub
         "attachments": attachments,
         "created_at": utc_iso(),
     }
-    
+
     res = await db.messages.insert_one(doc)
     doc["_id"] = res.inserted_id
+
     await db.channels.update_one(
         {"_id": oid(channel_id)},
-        {"$set": {"last_message_at": doc["created_at"], "last_body": payload.body[:120] or "📎 Attachment"}},
+        {
+            "$set": {
+                "last_message_at": doc["created_at"],
+                "last_body": payload.body[:120] or "📎 Attachment",
+            }
+        }
     )
-    if ch["kind"] == "announcement":
-        await notify(db, None, f"Announcement · {ch['name']}", payload.body[:180], kind="info", link="/wavygo-connect")
-    return _with_window(doc)
 
+    if ch["kind"] == "announcement":
+        await notify(
+            db,
+            None,
+            f"Announcement · {ch['name']}",
+            payload.body[:180],
+            kind="info",
+            link="/wavygo-connect",
+        )
+
+    return _with_window(doc)
 
 class MessageEdit(BaseModel):
     model_config = ConfigDict(str_strip_whitespace=True)

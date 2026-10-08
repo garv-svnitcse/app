@@ -37,12 +37,14 @@ async def upload_file(file: UploadFile) -> dict:
     is_image = ext in IMAGE_EXTENSIONS
     resource_type = "image" if is_image else "raw"
 
-    options = {"folder": "wavygo-chat", "resource_type": resource_type}
+    options = {
+    "folder": "wavygo-chat",
+    "resource_type": resource_type,
+    "type": "upload",
+    }
     if not is_image:
-        # Non-image files must keep their extension inside the public_id,
-        # otherwise the download link has no extension.
         options["public_id"] = f"{uuid.uuid4().hex[:12]}_{_safe_name(original_name)}"
-
+    
     try:
         result = await asyncio.to_thread(cloudinary.uploader.upload, contents, **options)
     except Exception as e:
