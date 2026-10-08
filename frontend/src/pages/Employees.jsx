@@ -130,6 +130,7 @@ const COMPANY_FIELDS = [
   ["employment_type", "Employment type"],
   ["stipend_or_salary", "Stipend / salary", "number"],
   ["offer_letter_url", "Offer letter link"],
+  ["employment_agreement_url", "Employment agreement link"],
   ["nda_signed", "NDA signed", "checkbox"],
   ["assigned_assets", "Assigned assets", "textarea"],
 ];
@@ -461,6 +462,21 @@ function EmployeeDetailsDialog({ employee, onClose }) {
                     editable={profile.can_edit_submitted}
                     onUploaded={handleDocumentUploaded}
                   />
+                  {profile.submitted?.other_documents?.length > 0 && (
+                    <div className="mt-4">
+                      <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">Uploaded Files</div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {profile.submitted.other_documents.map((doc, idx) => (
+                          <a key={idx} href={doc.url} target="_blank" rel="noreferrer" className="flex items-center gap-2 p-2 rounded-lg border border-border hover:bg-muted/50 transition-colors">
+                            <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+                            <div className="min-w-0 flex-1">
+                              <div className="text-xs font-medium truncate" title={doc.name}>{doc.name}</div>
+                            </div>
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             )}
@@ -510,6 +526,21 @@ function EmployeeDetailsDialog({ employee, onClose }) {
                     editable={profile.can_edit_company}
                     onUploaded={handleDocumentUploaded}
                   />
+                  {profile.company?.other_documents?.length > 0 && (
+                    <div className="mt-4">
+                      <div className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider mb-2">Uploaded Files</div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        {profile.company.other_documents.map((doc, idx) => (
+                          <a key={idx} href={doc.url} target="_blank" rel="noreferrer" className="flex items-center gap-2 p-2 rounded-lg border border-border hover:bg-muted/50 transition-colors">
+                            <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+                            <div className="min-w-0 flex-1">
+                              <div className="text-xs font-medium truncate" title={doc.name}>{doc.name}</div>
+                            </div>
+                          </a>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </CardContent>
               </Card>
             )}
@@ -992,6 +1023,9 @@ function Directory({ onChange }) {
                     </TableCell>
                     <TableCell className="text-right">
                       <div className="flex flex-wrap items-center justify-end gap-1.5">
+                          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => setDetailsUser(u)} disabled={!!actionLoadingKey} data-testid={`view-employee-btn-${u.id}`}>
+                            <Eye className="h-3.5 w-3.5 mr-1" /> View
+                          </Button>
                           {canEditRow && (
                             <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => startEdit(u)} disabled={!!actionLoadingKey} data-testid={`edit-employee-btn-${u.id}`}>
                               <Pencil className="h-3.5 w-3.5 mr-1" /> Edit
