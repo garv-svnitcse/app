@@ -896,7 +896,7 @@ function Directory({ onChange }) {
           updates.offer_letter_document_name = document.name;
         }
         if (otherFiles?.length) {
-          updates.employee_documents = [];
+          updates.employee_documents = [...(editingUser.employee_documents || [])];
           for (const file of otherFiles) {
             const document = await uploadEmployeeDocument(file, editForm.name.trim(), "Employee Document");
             uploadedDocuments.push(document);
@@ -1424,16 +1424,24 @@ function Directory({ onChange }) {
                 <div className="space-y-2 rounded-lg border border-border p-3">
                   <div className="text-xs text-muted-foreground">Employee documents are stored in the Company Vault and restricted to Founders and Admins.</div>
                   <div>
-                    <Label>Aadhaar document</Label>
+                    <Label>Aadhaar document {editingUser?.aadhaar_document_name && <span className="text-muted-foreground font-normal">(Existing: {editingUser.aadhaar_document_name})</span>}</Label>
                     <Input type="file" accept={EMPLOYEE_DOCUMENT_ACCEPT} onChange={(e) => { setEditForm(s => ({ ...s, aadhaar_document_file: e.target.files?.[0] || null })); e.target.value = ""; }} />
                   </div>
                   <div>
-                    <Label>Offer letter</Label>
+                    <Label>Offer letter {editingUser?.offer_letter_document_name && <span className="text-muted-foreground font-normal">(Existing: {editingUser.offer_letter_document_name})</span>}</Label>
                     <Input type="file" accept={EMPLOYEE_DOCUMENT_ACCEPT} onChange={(e) => { setEditForm(s => ({ ...s, offer_letter_document_file: e.target.files?.[0] || null })); e.target.value = ""; }} />
                   </div>
                   <div>
                     <Label>Other employee documents</Label>
+                    {editingUser?.employee_documents?.length > 0 && (
+                      <div className="mb-2 space-y-1">
+                        {editingUser.employee_documents.map((d, i) => (
+                          <div key={d.id || i} className="text-[11.5px] text-muted-foreground flex items-center gap-1.5"><FileText className="h-3 w-3" /> {d.name}</div>
+                        ))}
+                      </div>
+                    )}
                     <Input type="file" multiple accept={EMPLOYEE_DOCUMENT_ACCEPT} onChange={(e) => { setEditForm(s => ({ ...s, other_document_files: Array.from(e.target.files || []) })); e.target.value = ""; }} />
+                    <div className="text-[10px] text-muted-foreground mt-1">Uploading new files will add them to the existing documents.</div>
                   </div>
                 </div>
               </>
