@@ -548,6 +548,7 @@ function Directory({ onChange }) {
   const [showPassword, setShowPassword] = useState(false);
   const [passwordCopied, setPasswordCopied] = useState(false);
   const [editingUser, setEditingUser] = useState(null);
+  const [detailsUser, setDetailsUser] = useState(null);
   const [editForm, setEditForm] = useState({
     name: "", role: "Employee", designation: "", department: "", phone: "", joining_date: "",
     aadhaar_number: "",
@@ -977,7 +978,7 @@ function Directory({ onChange }) {
                     <TableCell>
                       <div className="flex items-center gap-2.5">
                         <Avatar className="h-8 w-8"><AvatarImage src={u.photo || undefined} /><AvatarFallback className="bg-wavygo-100 text-wavygo-800 text-[10px] font-semibold">{initials(u.name)}</AvatarFallback></Avatar>
-                        <div><div className="text-[13.5px] font-medium">{u.name}</div><div className="text-[11.5px] text-muted-foreground">{u.email}</div></div>
+                        <div><div className="text-[13.5px] font-medium cursor-pointer hover:underline text-primary" onClick={() => setDetailsUser(u)}>{u.name}</div><div className="text-[11.5px] text-muted-foreground">{u.email}</div></div>
                       </div>
                     </TableCell>
                     <TableCell><Badge variant="secondary">{u.role}</Badge></TableCell>
