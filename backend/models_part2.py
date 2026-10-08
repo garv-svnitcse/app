@@ -144,6 +144,14 @@ class TaskStatusPatch(BaseModel):
 EmployeeRole = Literal["Founder", "Admin", "Manager", "Employee", "Intern"]
 
 
+class ResourceIn(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+    category: str = Field(default="Other", min_length=1, max_length=80)
+    description: str = Field(default="", max_length=2000)
+    status: Literal["available", "in_use", "maintenance", "retired"] = "available"
+    assigned_to: Optional[str] = None
+
+
 def _iso_date(value: str) -> str:
     """Normalise a YYYY-MM-DD string; anything else is a validation error."""
     return date.fromisoformat((value or "").strip()).isoformat()

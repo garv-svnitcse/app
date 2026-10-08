@@ -67,6 +67,13 @@ class ChannelCreate(ChannelIn):
     departments: List[str] = Field(default_factory=list)
 
 
+class ChannelUpdate(BaseModel):
+    """Channel metadata fields that can be edited without changing membership or visibility."""
+    model_config = ConfigDict(str_strip_whitespace=True)
+    name: Optional[str] = Field(default=None, min_length=1, max_length=80)
+    description: Optional[str] = Field(default=None, max_length=500)
+
+
 class MessageCreate(MessageIn):
     """Blank (whitespace-only) messages are rejected."""
     model_config = ConfigDict(str_strip_whitespace=True)
@@ -99,6 +106,10 @@ def _can_manage(ch: dict, current: UserPublic) -> bool:
     if ch.get("department"):
         return False
     return current.id in _channel_admins(ch)
+
+
+def _can_edit_channel(ch: dict, current: UserPublic) -> bool:
+    return ch.get("kind") != "dm" and (current.role in MANAGER_ROLES or ch.get("created_by") == current.id)
 
 
 async def _get_channel(db, channel_id: str) -> dict:
@@ -172,6 +183,7 @@ async def _channel_meta(db, doc, current: UserPublic, unread: int | None = None)
     doc["unread"] = unread
     doc["members_only"] = not _is_public(doc)
     doc["member_count"] = len(doc.get("members", []))
+    doc["can_edit"] = _can_edit_channel(doc, current)
     if not _can_view(doc, current_id):
         # Founder/Admin managing a channel they're not in: membership metadata only, no message preview.
         doc.pop("last_body", None)
@@ -250,6 +262,32 @@ async def create_channel(payload: ChannelCreate,
             await notify(db, uid, f"Added to {label}", f"{current.name} added you to {doc['name']}.",
                          kind="info", link="/wavygo-connect")
     return serialize(doc)
+
+
+@router.patch("/channels/{channel_id}")
+async def update_channel(channel_id: str, payload: ChannelUpdate,
+                         current: UserPublic = Depends(get_current_user)):
+    db = get_db()
+    ch = await _get_channel(db, channel_id)
+    if ch.get("kind") == "dm":
+        raise HTTPException(400, "Direct messages cannot be edited")
+    if not _can_edit_channel(ch, current):
+        raise HTTPException(403, "Only the channel creator, Founder or Admin can edit channel details")
+    changes = payload.model_dump(exclude_unset=True)
+    if not changes:
+        raise HTTPException(422, "At least one channel field must be provided")
+    if "name" in changes and changes["name"] is None:
+        raise HTTPException(422, "Channel name cannot be blank")
+    if "description" in changes:
+        changes["description"] = changes["description"] or None
+    changed = {key: value for key, value in changes.items() if ch.get(key) != value}
+    if changed:
+        await db.channels.update_one({"_id": ch["_id"]}, {"$set": changed})
+        await log_activity(db, current, "Updated channel", "WavyGo Connect", target=ch["name"],
+                           meta={"updated_fields": list(changed)})
+        ch.update(changed)
+    await _channel_meta(db, ch, current)
+    return serialize(ch)
 
 
 @router.get("/channels/{channel_id}/members")
@@ -450,6 +488,7 @@ async def manage_channels(current: UserPublic = Depends(require_roles(*MANAGER_R
             "admins": _channel_admins(d) if d.get("kind") in MEMBER_KINDS else [],
             "created_by": d.get("created_by"), "is_member": current.id in d.get("members", []),
             "can_manage": _can_manage(d, current),
+            "can_edit": _can_edit_channel(d, current),
             "can_convert": d.get("kind") == "channel" and public,
         })
     return out
