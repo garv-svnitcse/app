@@ -32,7 +32,7 @@ jobs:
       MONGODB_URI: mongodb://127.0.0.1:27017
       MONGODB_URL: mongodb://127.0.0.1:27017
       DATABASE_URL: mongodb://127.0.0.1:27017
-      DB_NAME: wavygo_ci
+      DB_NAME: wavygo_ci_isolated
 
       REACT_APP_BACKEND_URL: http://127.0.0.1:8000
 
