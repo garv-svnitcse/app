@@ -4,10 +4,14 @@ import time
 
 import requests
 from pymongo import MongoClient
+
 from auth_utils import hash_password, verify_password
 
 
-BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "http://127.0.0.1:8000").rstrip("/")
+BASE_URL = os.environ.get(
+    "REACT_APP_BACKEND_URL",
+    "http://127.0.0.1:8000",
+).rstrip("/")
 API = f"{BASE_URL}/api"
 
 TEST_PASSWORD = os.environ.get("TEST_PASSWORD", "Wavygo@2026")
@@ -54,7 +58,10 @@ def repair_existing_ci_passwords():
             "Refusing password repair: unexpected MongoDB URL."
         )
 
-    client = MongoClient(mongo_url, serverSelectionTimeoutMS=3000)
+    client = MongoClient(
+        mongo_url,
+        serverSelectionTimeoutMS=3000,
+    )
 
     try:
         db = client[db_name]
@@ -62,23 +69,29 @@ def repair_existing_ci_passwords():
 
         for user in TEST_USERS:
             existing = db.users.find_one(
-                {"email": user["email"], "role": user["role"]},
-                {"_id": 1, "password_hash": 1},
+                {
+                    "email": user["email"],
+                    "role": user["role"],
+                },
+                {
+                    "_id": 1,
+                    "password_hash": 1,
+                },
             )
 
             if existing is None:
                 print(
-                    f"Account not found; API setup will handle it: "
-                    f"{user['email']}"
+                    "Account not found; API setup will handle it."
                 )
                 continue
 
             current_hash = existing.get("password_hash", "")
 
             if current_hash and verify_password(
-                TEST_PASSWORD, current_hash
+                TEST_PASSWORD,
+                current_hash,
             ):
-                print(f"Password already valid: {user['email']}")
+                print("CI account password is already valid.")
                 continue
 
             result = db.users.update_one(
@@ -87,15 +100,20 @@ def repair_existing_ci_passwords():
                     "email": user["email"],
                     "role": user["role"],
                 },
-                {"$set": {"password_hash": password_hash}},
+                {
+                    "$set": {
+                        "password_hash": password_hash,
+                    }
+                },
             )
 
             if result.modified_count == 1:
-                print(f"Repaired CI password: {user['email']}")
+                print("Repaired CI account password.")
             else:
                 raise RuntimeError(
-                    f"Password repair was not confirmed: {user['email']}"
+                    "CI account password repair was not confirmed."
                 )
+
     finally:
         client.close()
 
@@ -103,10 +121,15 @@ def repair_existing_ci_passwords():
 def wait_for_backend():
     for _ in range(60):
         try:
-            response = requests.get(f"{API}/health", timeout=2)
+            response = requests.get(
+                f"{API}/health",
+                timeout=2,
+            )
+
             if response.status_code == 200:
                 print("Backend is ready.")
                 return
+
         except requests.RequestException:
             pass
 
@@ -132,7 +155,9 @@ def login(email, password):
 def register_user(token, user):
     response = requests.post(
         f"{API}/auth/register",
-        headers={"Authorization": f"Bearer {token}"},
+        headers={
+            "Authorization": f"Bearer {token}",
+        },
         json={
             "email": user["email"],
             "password": TEST_PASSWORD,
@@ -143,11 +168,11 @@ def register_user(token, user):
     )
 
     if response.status_code == 409:
-        print(f"{user['role']} already exists: {user['email']}")
+        print(f"CI {user['role']} account already exists.")
         return
 
     response.raise_for_status()
-    print(f"Created CI {user['role']}: {user['email']}")
+    print(f"Created CI {user['role']} account.")
 
 
 async def seed_part2():
@@ -164,7 +189,6 @@ def main():
     founder_token = founder["access_token"]
 
     repair_existing_ci_passwords()
-
 
     # Founder creates the Admin first.
     admin = TEST_USERS[0]
