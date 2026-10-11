@@ -81,39 +81,63 @@ def test_change_own_password_gates(tokens):
                       json={"current_password": TEST_PASSWORD, "new_password": TEST_PASSWORD})
     assert r.status_code == 200, f"Manager change_password expected 200 got {r.status_code}: {r.text}"
 
-
 # ---------------- Reset password ----------------
 def test_reset_password_endpoint(tokens):
-    # Find an employee id (self of Employee)
+    # Find an employee id
     emp_id = tokens["Employee"]["user"].get("id")
     assert emp_id, "employee id missing from login response"
 
-    # Founder -> 200 with temp_password
-    r = requests.post(f"{API}/employees/{emp_id}/reset-password", headers=H(tokens, "Founder"))
-    assert r.status_code == 200, f"Founder reset expected 200 got {r.status_code}: {r.text}"
-    assert "temp_password" in r.json(), f"missing temp_password: {r.json()}"
+    employee_email = CREDS["Employee"][0]
 
-    # Admin -> 200
-    r = requests.post(f"{API}/employees/{emp_id}/reset-password", headers=H(tokens, "Admin"))
-    assert r.status_code == 200, f"Admin reset expected 200 got {r.status_code}"
-    temp_pwd = r.json().get("temp_password")
-    assert temp_pwd
+    # Founder -> 200 with temporary password
+    r = requests.post(
+        f"{API}/employees/{emp_id}/reset-password",
+        headers=H(tokens, "Founder"),
+        timeout=15,
+    )
+    assert r.status_code == 200, (
+        f"Founder reset expected 200 got {r.status_code}: {r.text}"
+    )
+    assert r.json().get("temp_password")
+
+    # Admin -> 200, explicitly set the expected test password.
+    # This keeps subsequent test runs deterministic.
+    r = requests.post(
+        f"{API}/employees/{emp_id}/reset-password",
+        headers=H(tokens, "Admin"),
+        json={"new_password": TEST_PASSWORD},
+        timeout=15,
+    )
+    assert r.status_code == 200, (
+        f"Admin reset expected 200 got {r.status_code}: {r.text}"
+    )
+    assert r.json().get("temp_password") == TEST_PASSWORD
 
     # Manager/Employee/Intern -> 403
     for role in ("Manager", "Employee", "Intern"):
-        r = requests.post(f"{API}/employees/{emp_id}/reset-password", headers=H(tokens, role))
-        assert r.status_code == 403, f"{role} reset expected 403 got {r.status_code}"
+        r = requests.post(
+            f"{API}/employees/{emp_id}/reset-password",
+            headers=H(tokens, role),
+            timeout=15,
+        )
+        assert r.status_code == 403, (
+            f"{role} reset expected 403 got {r.status_code}: {r.text}"
+        )
 
-    # Restore employee password so subsequent tests keep working
-    requests.post(f"{API}/auth/login", json={"email": CREDS["Employee"][0], "password": temp_pwd})
-    # Founder resets to make it deterministic; then we re-login via seed default won't work.
-    # Instead, re-login employee with temp_pwd and self-change is 403; so use admin reset again — 
-    # this leaves a random temp_password. Re-login employee & refresh token for downstream tests.
-    r2 = requests.post(f"{API}/auth/login", json={"email": CREDS["Employee"][0], "password": temp_pwd}, timeout=15)
-    assert r2.status_code == 200, f"post-reset employee login failed: {r2.status_code} {r2.text}"
-    new_tok = r2.json().get("access_token") or r2.json().get("token")
+    # Verify Employee can log in with the restored test password.
+    r = requests.post(
+        f"{API}/auth/login",
+        json={"email": employee_email, "password": TEST_PASSWORD},
+        timeout=15,
+    )
+    assert r.status_code == 200, (
+        f"Employee login after password restoration failed: "
+        f"{r.status_code} {r.text}"
+    )
+
+    new_tok = r.json().get("access_token") or r.json().get("token")
+    assert new_tok, "Employee login did not return an access token"
     tokens["Employee"]["token"] = new_tok
-
 
 # ---------------- Marketplace ----------------
 def test_marketplace_founder_only(tokens):
