@@ -89,7 +89,7 @@ async def _startup():
         await seed_all()
         logger.info("Founder account verification complete.")
     except Exception as e:
-        logger.exception("Startup user verification failed: %s", e)
+        logger.exception("Startup user verification failed.")
 
 
 @app.on_event("shutdown")
