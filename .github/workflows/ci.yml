@@ -1,5 +1,8 @@
 name: WavyGo ERP CI/CD Pipeline
 
+permissions:
+  contents: read
+
 on:
   push:
     branches:
