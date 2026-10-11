@@ -3,6 +3,8 @@ import os
 import time
 
 import requests
+from pymongo import MongoClient
+from auth_utils import hash_password, verify_password
 
 
 BASE_URL = os.environ.get("REACT_APP_BACKEND_URL", "http://127.0.0.1:8000").rstrip("/")
@@ -35,6 +37,67 @@ TEST_USERS = [
         "role": "Intern",
     },
 ]
+
+
+def repair_existing_ci_passwords():
+    """Repair only designated accounts in the guarded local CI database."""
+    mongo_url = os.environ.get("MONGO_URL", "")
+    db_name = os.environ.get("DB_NAME", "")
+
+    if db_name != "wavygo_ci_isolated":
+        raise RuntimeError(
+            "Refusing password repair: DB_NAME must be wavygo_ci_isolated."
+        )
+
+    if mongo_url != "mongodb://127.0.0.1:27017":
+        raise RuntimeError(
+            "Refusing password repair: unexpected MongoDB URL."
+        )
+
+    client = MongoClient(mongo_url, serverSelectionTimeoutMS=3000)
+
+    try:
+        db = client[db_name]
+        password_hash = hash_password(TEST_PASSWORD)
+
+        for user in TEST_USERS:
+            existing = db.users.find_one(
+                {"email": user["email"], "role": user["role"]},
+                {"_id": 1, "password_hash": 1},
+            )
+
+            if existing is None:
+                print(
+                    f"Account not found; API setup will handle it: "
+                    f"{user['email']}"
+                )
+                continue
+
+            current_hash = existing.get("password_hash", "")
+
+            if current_hash and verify_password(
+                TEST_PASSWORD, current_hash
+            ):
+                print(f"Password already valid: {user['email']}")
+                continue
+
+            result = db.users.update_one(
+                {
+                    "_id": existing["_id"],
+                    "email": user["email"],
+                    "role": user["role"],
+                },
+                {"$set": {"password_hash": password_hash}},
+            )
+
+            if result.modified_count == 1:
+                print(f"Repaired CI password: {user['email']}")
+            else:
+                raise RuntimeError(
+                    f"Password repair was not confirmed: {user['email']}"
+                )
+    finally:
+        client.close()
 
 
 def wait_for_backend():
@@ -99,6 +162,9 @@ def main():
 
     founder = login(FOUNDER_EMAIL, FOUNDER_PASSWORD)
     founder_token = founder["access_token"]
+
+    repair_existing_ci_passwords()
+
 
     # Founder creates the Admin first.
     admin = TEST_USERS[0]
