@@ -48,6 +48,30 @@ REAL_USERS = {"password_hash": {"$nin": ["", None]}}
 SELF_FIELDS = {"name", "phone", "photo"}
 ORG_FIELDS = SELF_FIELDS | {"designation", "department", "role"}
 
+# Profile fields only the Founder can edit or provide on invitation.
+FOUNDER_PROFILE_FIELDS = {
+    "phone",
+    "photo",
+    "designation",
+    "joining_date",
+    "aadhaar_number",
+    "aadhaar_document_id",
+    "aadhaar_document_name",
+    "offer_letter_document_id",
+    "offer_letter_document_name",
+    "employee_documents",
+}
+
+# Sensitive employee profile fields stripped for non-Founder/Admin users.
+SENSITIVE_PROFILE_FIELDS = {
+    "aadhaar_number",
+    "aadhaar_document_id",
+    "aadhaar_document_name",
+    "offer_letter_document_id",
+    "offer_letter_document_name",
+    "employee_documents",
+}
+
 # Roles that may see and edit everything in an employee's details profile.
 ADMIN_ROLES = ("Founder", "Admin")
 
@@ -55,6 +79,18 @@ ADMIN_ROLES = ("Founder", "Admin")
 # ============================================================
 # HELPERS
 # ============================================================
+
+async def _validate_profile_document(db, document_id: str | ObjectId | None):
+    if not document_id:
+        return None
+    doc_id_str = str(document_id)
+    if not ObjectId.is_valid(doc_id_str):
+        raise HTTPException(400, "Invalid document ID")
+    doc = await db.vault_documents.find_one({"_id": ObjectId(doc_id_str)})
+    if not doc:
+        raise HTTPException(404, "Vault document not found")
+    return doc
+
 
 def _today_ist() -> str:
     return datetime.now(COMPANY_TZ).date().isoformat()
@@ -238,6 +274,11 @@ async def list_employees(
         "created_at",
         -1,
     ).to_list(500)
+
+    if current.role not in ("Founder", "Admin"):
+        for doc in docs:
+            for field in SENSITIVE_PROFILE_FIELDS:
+                doc.pop(field, None)
 
     return serialize_many(docs)
 
@@ -445,7 +486,18 @@ async def invite_employee(
     if not can(current.role, f"user.invite.{payload.role.lower()}"):
         raise HTTPException(403, f"Your role cannot invite a {payload.role}")
 
+    if current.role != "Founder" and set(payload.model_fields_set) & FOUNDER_PROFILE_FIELDS:
+        raise HTTPException(403, "Only the Founder can set employee profile details or documents")
+
     department = await _resolve_department(db, payload.department)
+
+    if payload.aadhaar_document_id:
+        await _validate_profile_document(db, payload.aadhaar_document_id)
+    if payload.offer_letter_document_id:
+        await _validate_profile_document(db, payload.offer_letter_document_id)
+    if payload.employee_documents:
+        for document in payload.employee_documents:
+            await _validate_profile_document(db, document.get("id"))
 
     existing_user = await db.users.find_one({"email": _email_regex(email)})
     if existing_user and not _is_placeholder(existing_user):
@@ -461,6 +513,18 @@ async def invite_employee(
         "department": department,
         "phone": payload.phone,
     }
+    for k in (
+        "joining_date",
+        "aadhaar_number",
+        "aadhaar_document_id",
+        "aadhaar_document_name",
+        "offer_letter_document_id",
+        "offer_letter_document_name",
+        "employee_documents",
+    ):
+        v = getattr(payload, k, None)
+        if v is not None:
+            fields[k] = v
 
     if existing_user:
         # Placeholder from an earlier, never-accepted invitation: refresh its details.
@@ -634,6 +698,17 @@ async def accept_invite(payload: dict):
         "department": inv.get("department"),
         "phone": inv.get("phone"),
     }
+    for k in (
+        "joining_date",
+        "aadhaar_number",
+        "aadhaar_document_id",
+        "aadhaar_document_name",
+        "offer_letter_document_id",
+        "offer_letter_document_name",
+        "employee_documents",
+    ):
+        if k in inv and inv[k] is not None:
+            fields[k] = inv[k]
 
     # Only the placeholder created by this invitation may be activated — never an
     # existing account that happens to share the email.
@@ -1030,6 +1105,7 @@ async def update_employee(
                 "aadhaar_document_name",
                 "offer_letter_document_id",
                 "offer_letter_document_name",
+                "employee_documents",
             }
     elif target_role == "Founder":
         raise HTTPException(403, "Only the Founder can edit the Founder profile")
@@ -1047,6 +1123,7 @@ async def update_employee(
             "aadhaar_document_name",
             "offer_letter_document_id",
             "offer_letter_document_name",
+            "employee_documents",
         }
 
     changes = {}

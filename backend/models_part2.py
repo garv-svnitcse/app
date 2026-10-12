@@ -188,6 +188,23 @@ class EmployeeInviteIn(BaseModel):
     designation: Optional[str] = None
     department: Optional[str] = None
     phone: Optional[str] = None
+    joining_date: Optional[str] = None
+    aadhaar_number: Optional[str] = None
+    aadhaar_document_id: Optional[str] = None
+    aadhaar_document_name: Optional[str] = None
+    offer_letter_document_id: Optional[str] = None
+    offer_letter_document_name: Optional[str] = None
+    employee_documents: Optional[list] = None
+
+    @field_validator("joining_date")
+    @classmethod
+    def _validate_invite_joining_date(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        v = v.strip()
+        if not v:
+            return None
+        return _iso_date(v)
 
 
 class EmployeeUpdateIn(BaseModel):
@@ -207,6 +224,16 @@ class EmployeeUpdateIn(BaseModel):
     offer_letter_document_id: Optional[str] = None
     offer_letter_document_name: Optional[str] = None
     employee_documents: Optional[list] = None
+
+    @field_validator("joining_date")
+    @classmethod
+    def _validate_update_joining_date(cls, v: Optional[str]) -> Optional[str]:
+        if v is None:
+            return None
+        v = v.strip()
+        if not v:
+            return None
+        return _iso_date(v)
 
 
 class AttendanceIn(BaseModel):
