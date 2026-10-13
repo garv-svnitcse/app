@@ -1,18 +1,30 @@
 name: WavyGo ERP CI/CD Pipeline
 
+permissions:
+  contents: read
+
 on:
   push:
-    branches: [ main, master, garv-agarwal, 'feature/*' ]
+    branches:
+      - main
+      - master
+      - garv-agarwal
+      - 'feature/*'
+
   pull_request:
-    branches: [ main, master, garv-agarwal ]
+    branches:
+      - main
+      - master
+      - garv-agarwal
 
 jobs:
+
   backend-test:
-    name: 🐍 Backend Tests & Quality Checks
+    name: Backend Tests & Quality Checks
     runs-on: ubuntu-latest
+
     services:
-      # The *_local_test.py suites start their own API server against a throwaway database here.
-      mongo:
+      mongodb:
         image: mongo:7
         ports:
           - 27017:27017
@@ -21,16 +33,30 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+
     env:
-      MONGO_URL: mongodb://localhost:27017
-      DB_NAME: wavygo_ci
-      JWT_SECRET: ci-only-secret-not-used-anywhere-else
-      CORS_ORIGINS: "*"
-      FOUNDER_EMAIL: founder@ci.wavygo.in
-      FOUNDER_PASSWORD: Ci-Founder-Pass-123
+      MONGO_URI: mongodb://127.0.0.1:27017
+      MONGO_URL: mongodb://127.0.0.1:27017
+      MONGODB_URI: mongodb://127.0.0.1:27017
+      MONGODB_URL: mongodb://127.0.0.1:27017
+      DATABASE_URL: mongodb://127.0.0.1:27017
+      DB_NAME: wavygo_ci_isolated
+
+      REACT_APP_BACKEND_URL: http://127.0.0.1:8000
+
+      FOUNDER_EMAIL: founder@wavygo.in
       FOUNDER_NAME: CI Founder
-      FRONTEND_URL: http://localhost:3000
+      FOUNDER_PASSWORD: Wavygo-CI-2026-Test!
+
+      ADMIN_EMAIL: admin@wavygo.in
+      MANAGER_EMAIL: manager@wavygo.in
+      EMPLOYEE_EMAIL: employee@wavygo.in
+      INTERN_EMAIL: intern@wavygo.in
+
+      TEST_PASSWORD: Wavygo-CI-2026-Test!
+
     steps:
+
       - name: Checkout Codebase
         uses: actions/checkout@v4
 
@@ -39,40 +65,69 @@ jobs:
         with:
           python-version: '3.12'
           cache: 'pip'
+          cache-dependency-path: backend/requirements.txt
 
       - name: Install Backend Dependencies
+        working-directory: backend
         run: |
-          cd backend
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Run Pytest Test Suite
-        # End-to-end suites against a deployment are skipped unless WAVYGO_E2E_URL is set.
+      - name: Generate CI JWT Secret
         run: |
-          cd backend
+          echo "JWT_SECRET=$(python -c 'import secrets; print(secrets.token_urlsafe(32))')" >> "$GITHUB_ENV"
+
+      - name: Start Backend
+        working-directory: backend
+        run: |
+          nohup python -m uvicorn server:app --host 127.0.0.1 --port 8000 > backend.log 2>&1 &
+          echo $! > backend.pid
+
+      - name: Prepare CI Test Environment
+        working-directory: backend
+        run: |
+          python ci_setup.py
+
+      - name: Show Backend Log If Setup Fails
+        if: failure()
+        working-directory: backend
+        run: |
+          cat backend.log || true
+
+      - name: Run Pytest Test Suite
+        working-directory: backend
+        run: |
           pytest
 
+      - name: Show Backend Log
+        if: always()
+        working-directory: backend
+        run: |
+          cat backend.log || true
+
+
   frontend-build:
-    name: ⚛️ Frontend Build Verification
+    name: Frontend Build Verification
     runs-on: ubuntu-latest
+
     steps:
+
       - name: Checkout Codebase
         uses: actions/checkout@v4
 
-      - name: Set up Node.js 22
+      - name: Set up Node.js 20
         uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 20
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
 
       - name: Install Frontend Dependencies
-        # frontend/.npmrc sets legacy-peer-deps for the date-fns / eslint peer ranges.
+        working-directory: frontend
         run: |
-          cd frontend
-          npm ci
+          npm ci --legacy-peer-deps
 
       - name: Build React Application
+        working-directory: frontend
         run: |
-          cd frontend
           CI=false npm run build
